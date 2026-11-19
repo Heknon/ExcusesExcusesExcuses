@@ -19,7 +19,7 @@ At the end of the week you mark each goal ✅ done / 🤏 partial / 🙄 excuses
 - **Week view** with a tab per section, inline editing, and a tally of who's most doubted / most backed.
 - **Results** per member, showing who doubted and who backed them.
 - **Leaderboard** with points, prediction accuracy, streaks, awards (מלך הביצועים, מלך התירוצים, הנביא…) and the **היכל התירוצים**.
-- Shared by the whole team: one small server, data in SQLite. Optional team passcode.
+- Shared by the whole team: one small Node server backed by **Postgres**. Optional team passcode.
 
 ### Scoring
 
@@ -35,13 +35,19 @@ Change the numbers in `shared/scoring.ts`.
 
 ## Running
 
-Requires **Node 22.18+** (uses built-in TypeScript stripping and `node:sqlite`, so the server has zero runtime dependencies).
+Requires **Node 22.18+** (runs the TypeScript server directly, no build step) and **Postgres** (any recent version; tested on 16).
+The schema is created automatically on startup.
 
 ```bash
+docker compose up -d db                     # or use your own Postgres
+cp .env.example .env                        # DATABASE_URL=...
 npm install
-npm run dev        # API on :3000 + Vite on :5173
-npm test           # parser + scoring tests
-npm run build && npm start   # production, serves everything on :3000
+npm run dev                                 # API on :3000 + UI on :5173 (reads .env)
+
+npm test                                    # parser + scoring tests
+TEST_DATABASE_URL=postgres://… npm test     # + Postgres integration tests (uses a throwaway schema)
+
+npm run build && npm start                  # production, serves everything on :3000
 ```
 
 Environment variables:
@@ -49,23 +55,25 @@ Environment variables:
 | var | default | |
 |---|---|---|
 | `PORT` | `3000` | |
-| `DB_FILE` | `data/excuses.db` | SQLite file — put it on a persistent disk |
+| `DATABASE_URL` | `postgres://localhost:5432/excuses` | add `?sslmode=require` for hosted Postgres that needs TLS |
 | `TEAM_PASSCODE` | *(none)* | if set, the app asks for it once per device |
 
 ### Deploying
 
-Any host that runs a Docker container with a persistent volume works (Fly.io, Railway, Render, a VPS):
+Everything in one go (app + Postgres): `docker compose up --build`.
+
+Or run the image anywhere and point it at a managed Postgres (Neon, Supabase, Railway, Render, RDS…):
 
 ```bash
 docker build -t excuses .
-docker run -p 3000:3000 -v excuses-data:/data -e TEAM_PASSCODE=secret excuses
+docker run -p 3000:3000 -e DATABASE_URL='postgres://user:pass@host/db?sslmode=require' -e TEAM_PASSCODE=secret excuses
 ```
 
 ## Layout
 
 ```
 shared/   types, WhatsApp parser/formatter, scoring (used by client, server and tests)
-server/   node:http API + SQLite
+server/   node:http API + Postgres (pg)
 src/      React UI (RTL Hebrew)
 tests/    node:test suites
 ```

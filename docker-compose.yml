@@ -1,0 +1,28 @@
+# Local / self-hosted: app + Postgres.  `docker compose up --build` → http://localhost:3000
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: excuses
+      POSTGRES_PASSWORD: excuses
+      POSTGRES_DB: excuses
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U excuses"]
+      interval: 2s
+      retries: 20
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://excuses:excuses@db:5432/excuses
+      TEAM_PASSCODE: ${TEAM_PASSCODE:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  pgdata:

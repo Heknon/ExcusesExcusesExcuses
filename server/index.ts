@@ -5,7 +5,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { openDb, HttpError, type Db } from './db.ts';
 
 const PORT = Number(process.env.PORT ?? 3000);
-const DB_FILE = process.env.DB_FILE ?? resolve('data/excuses.db');
+const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://localhost:5432/excuses';
 /** Optional shared team passcode. When set, every API call must send it. */
 const PASSCODE = process.env.TEAM_PASSCODE ?? '';
 const STATIC_DIR = resolve('dist');
@@ -49,7 +49,7 @@ function authorized(req: IncomingMessage) {
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
-type Handler = (db: Db, params: number[], body: any) => unknown;
+type Handler = (db: Db, params: number[], body: any) => Promise<unknown>;
 const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/state$/, (db) => db.state()],
   ['POST', /^\/api\/members$/, (db, _, b) => db.addMember(String(b.name ?? ''))],
@@ -88,14 +88,17 @@ export function createApp(db: Db) {
   return createServer(async (req, res) => {
     const path = (req.url ?? '/').split('?')[0];
     if (!path.startsWith('/api/')) return serveStatic(req, res);
-    if (path === '/api/health') return send(res, 200, { ok: true, passcode: !!PASSCODE });
+    if (path === '/api/health') {
+      const dbOk = await db.pool.query('SELECT 1').then(() => true, () => false);
+      return send(res, dbOk ? 200 : 503, { ok: dbOk, passcode: !!PASSCODE });
+    }
     if (!authorized(req)) return send(res, 401, { error: 'Wrong team passcode' });
     for (const [method, re, handler] of routes) {
       const m = path.match(re);
       if (!m || req.method !== method) continue;
       try {
         const body = method === 'GET' || method === 'DELETE' ? {} : await readJson(req);
-        const result = handler(db, m.slice(1).map(Number), body);
+        const result = await handler(db, m.slice(1).map(Number), body);
         return send(res, 200, result ?? { ok: true });
       } catch (err) {
         if (err instanceof HttpError) return send(res, err.status, { error: err.message });
@@ -108,8 +111,9 @@ export function createApp(db: Db) {
 }
 
 if (import.meta.main ?? process.argv[1]?.endsWith('index.ts')) {
-  const db = openDb(DB_FILE);
+  const db = await openDb(DATABASE_URL);
+  const { host, pathname } = new URL(DATABASE_URL);
   createApp(db).listen(PORT, () => {
-    console.log(`Excuses Excuses Excuses → http://localhost:${PORT}  (db: ${DB_FILE}${PASSCODE ? ', passcode on' : ''})`);
+    console.log(`Excuses Excuses Excuses → http://localhost:${PORT}  (db: ${host}${pathname}${PASSCODE ? ', passcode on' : ''})`);
   });
 }
