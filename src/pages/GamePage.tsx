@@ -92,7 +92,7 @@ function GameShell({ tab, children }: { tab: GameTab; children: ReactNode }) {
       <header className="game-header">
         <div className="game-header-main">
           <Link to="/" className="back-link">
-            <Icon name="chevronLeft" size={16} /> {t.common.games}
+            <Icon name="chevronLeft" size={16} /> <span className="back-label">{t.common.games}</span>
           </Link>
           <h1 className="display game-title" dir="auto">
             {state.game.name}

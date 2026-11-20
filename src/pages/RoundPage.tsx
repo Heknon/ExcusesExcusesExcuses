@@ -434,10 +434,9 @@ function GoalsCard({ round, entry }: { round: Round; entry: Entry }) {
           </Button>
         )}
       </header>
-      <p className="move-step-hint move-lede">{t.round.goalHint}</p>
+      <p className="move-step-hint move-lede">{t.round.goalsPhaseHint}</p>
       <GoalsEditor value={goals} onChange={setGoals} autoFocus />
       <footer className="move-footer">
-        <span className="muted small">{t.round.goalsPhaseHint}</span>
         <Button variant="primary" size="lg" icon="check" disabled={!list.length} loading={busy} onClick={save}>
           {t.round.saveGoals}
         </Button>
@@ -515,7 +514,7 @@ function BetsCard({ round, entry }: { round: Round; entry: Entry }) {
         <div className="move-step-body">
           <span className="move-step-title">{t.round.callTitle}</span>
           <p className="move-step-hint">{t.round.callHint(POINTS.callHit)}</p>
-          <PlayerPicker tone="call" label={t.round.callTitle} players={others} value={excusePickId} onChange={setExcusePick} />
+          <PlayerPicker tone="call" compact label={t.round.callTitle} players={others} value={excusePickId} onChange={setExcusePick} />
           <AutoTextarea value={excuseReason} onChange={(e) => setExcuseReason(e.target.value)} placeholder={t.round.why} aria-label={t.round.whyCall} maxLength={500} />
         </div>
       </div>
@@ -525,7 +524,7 @@ function BetsCard({ round, entry }: { round: Round; entry: Entry }) {
         <div className="move-step-body">
           <span className="move-step-title">{t.round.betTitle}</span>
           <p className="move-step-hint">{t.round.betHint(POINTS.betHit)}</p>
-          <PlayerPicker tone="bet" label={t.round.betTitle} players={others} value={betPickId} onChange={setBetPick} />
+          <PlayerPicker tone="bet" compact label={t.round.betTitle} players={others} value={betPickId} onChange={setBetPick} />
           <AutoTextarea value={betReason} onChange={(e) => setBetReason(e.target.value)} placeholder={t.round.why} aria-label={t.round.whyBet} maxLength={500} />
         </div>
       </div>
@@ -1017,7 +1016,9 @@ function RowStatus({ round, entry: e, points, leader }: { round: Round; entry: E
           {t.round.goalsReady}
         </Pill>
       ) : (
-        <Pill icon="clock">{t.round.writing}</Pill>
+        <Pill tone="muted" icon="clock">
+          {t.round.writing}
+        </Pill>
       );
     case 'bets':
       return e.submitted ? (
@@ -1025,7 +1026,9 @@ function RowStatus({ round, entry: e, points, leader }: { round: Round; entry: E
           {t.round.lockedIn}
         </Pill>
       ) : (
-        <Pill icon="clock">{t.round.deciding}</Pill>
+        <Pill tone="muted" icon="clock">
+          {t.round.deciding}
+        </Pill>
       );
     case 'live':
       return <OutcomePill outcome={e.outcome} />;
@@ -1115,11 +1118,11 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
         <>
           <div className="field">
             <span className="field-label">{t.round.excusesFrom}</span>
-            <PlayerPicker tone="call" label={t.round.excusesFrom} players={others} value={excusePickId} onChange={setExcusePick} />
+            <PlayerPicker tone="call" compact label={t.round.excusesFrom} players={others} value={excusePickId} onChange={setExcusePick} />
           </div>
           <div className="field">
             <span className="field-label">{t.round.delivering}</span>
-            <PlayerPicker tone="bet" label={t.round.delivering} players={others} value={betPickId} onChange={setBetPick} />
+            <PlayerPicker tone="bet" compact label={t.round.delivering} players={others} value={betPickId} onChange={setBetPick} />
           </div>
         </>
       ) : (
@@ -1155,7 +1158,7 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
           {canVote && (
             <div className="field">
               <span className="field-label">{t.round.voteTitle}</span>
-              <PlayerPicker tone="vote" label={t.round.voteTitle} players={others} value={mvpVoteId} onChange={setVote} />
+              <PlayerPicker tone="vote" compact label={t.round.voteTitle} players={others} value={mvpVoteId} onChange={setVote} />
             </div>
           )}
           <ProofUploader entry={entry} />

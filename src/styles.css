@@ -1577,3 +1577,37 @@ span.goal-list { display: grid; }
 .picker-compact .picker-option .avatar { width: 30px !important; height: 30px !important; font-size: 12px !important; }
 .picker-compact .picker-name { font-size: 14px; }
 .picker-compact .picker-check { position: static; margin-inline-start: -2px; }
+
+/* =========================================================
+   Phone review pass 2
+   ========================================================= */
+/* Waiting states shouldn't shout: plain muted text, no box. */
+.pill-muted, .pill-pending { background: transparent; color: var(--ink-3); padding-inline: 2px; }
+/* A disabled primary button is quiet, without the accent underline. */
+.btn-primary:disabled { box-shadow: none; background: var(--line-2); color: var(--ink-3); opacity: 1; }
+.btn-primary:disabled .icon { opacity: 0.7; }
+
+@media (max-width: 720px) {
+  /* Game header: one row — back arrow and game name. */
+  .game-header { align-items: center; gap: 10px; }
+  .game-header-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .back-link { margin: 0; padding: 6px; margin-inline-start: -6px; }
+  .back-label { display: none; }
+  .game-title { font-size: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .invite-btn { height: 36px; }
+  .page-game { padding-top: 12px; }
+
+  /* Round header: date and round switcher on one row, then deadline, then the phase bar. */
+  .round-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; width: 100%; }
+  .round-title { order: 1; font-size: 24px; }
+  .round-nav { order: 2; margin-inline-start: auto; margin-inline-end: -8px; }
+  .round-nav .icon-btn { width: 32px; height: 32px; }
+  .round-subtitle { order: 3; flex-basis: 100%; font-size: 15px; }
+  .round-heading .deadline { order: 4; flex-basis: 100%; }
+  .move-footer .btn { width: 100%; }
+}
+.input-code::placeholder { letter-spacing: 0; font-family: var(--font-ui); font-weight: 400; text-transform: none; }
+@media (max-width: 720px) {
+  .home-header .display { font-size: 28px; }
+}
+.move-report .excuse-box { margin-top: 16px; }
