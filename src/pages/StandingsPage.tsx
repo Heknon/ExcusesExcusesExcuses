@@ -63,8 +63,8 @@ export function StandingsPage() {
                 <span>{t.standings.readsRight}</span>
               </span>
               <span className="leader-stat">
-                <b>{s.streak || '—'}</b>
-                <span>{t.standings.streak}</span>
+                <b>{s.mvps || '—'}</b>
+                <span>{t.standings.mvps}</span>
               </span>
               <span className="leader-points">
                 <b>{s.points}</b>
@@ -126,6 +126,9 @@ export function StandingsPage() {
           </li>
           <li>
             <b dir="ltr">+{POINTS.betHit}</b> {t.standings.rules.bet}
+          </li>
+          <li>
+            <b dir="ltr">+{POINTS.mvp}</b> {t.standings.rules.mvp}
           </li>
         </ul>
         <p className="muted small">{t.standings.footnote}</p>

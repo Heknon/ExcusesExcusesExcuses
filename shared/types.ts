@@ -2,13 +2,18 @@ export type Outcome = 'pending' | 'done' | 'partial' | 'failed';
 export const OUTCOMES: readonly Outcome[] = ['pending', 'done', 'partial', 'failed'];
 
 /**
- * A round is one week of the game.
- * - planning: players lock in a goal, an excuse call and a bet. Calls and bets stay secret.
- * - live: the week is under way. Calls and bets are revealed; players report how it went.
- * - final: results are locked and scored.
+ * A round is one week of the game, played the way the group does it sitting together:
+ * - goals: everyone shares their goals; everyone sees them as they're written.
+ * - bets:  goals are locked. Everyone picks who'll come back with excuses and who'll have the most
+ *          impressive week. Picks stay secret until the admin reveals them.
+ * - live:  the week is under way. Picks are revealed; players report each goal and vote (secretly)
+ *          for the most impressive week.
+ * - final: scored; votes are revealed.
  */
-export type RoundStatus = 'planning' | 'live' | 'final';
-export const ROUND_STATUSES: readonly RoundStatus[] = ['planning', 'live', 'final'];
+export type RoundStatus = 'goals' | 'bets' | 'live' | 'final';
+export const ROUND_STATUSES: readonly RoundStatus[] = ['goals', 'bets', 'live', 'final'];
+/** Phases where picks are still being made and stay hidden. */
+export const isPrePlay = (s: RoundStatus) => s === 'goals' || s === 'bets';
 
 export type Role = 'admin' | 'player';
 export type PlayerStatus = 'pending' | 'active' | 'removed';
@@ -82,19 +87,23 @@ export interface Entry {
   /** Who this player thinks will come back with excuses. */
   excusePickId: number | null;
   excuseReason: string;
-  /** Who this player bets will deliver. */
+  /** Who this player bets will have the most impressive week. */
   betPickId: number | null;
   betReason: string;
+  /** This player's vote for the most impressive week. Hidden from others until the round is final. */
+  mvpVoteId: number | null;
+  /** Whether this player has voted (visible to everyone, so the admin can see who's missing). */
+  voted: boolean;
   /** The player has locked in their move for the round. */
   submitted: boolean;
-  /** Calls and bets are hidden from other players while the round is in planning. */
+  /** Calls and bets are hidden from other players until the admin reveals them. */
   hidden: boolean;
   /** Photos attached as proof, oldest first. */
   proofs: Proof[];
 }
 
 export type EntryPatch = Partial<
-  Pick<Entry, 'outcome' | 'excuse' | 'notes' | 'excusePickId' | 'excuseReason' | 'betPickId' | 'betReason' | 'submitted'>
+  Pick<Entry, 'outcome' | 'excuse' | 'notes' | 'excusePickId' | 'excuseReason' | 'betPickId' | 'betReason' | 'submitted' | 'mvpVoteId'>
 > & {
   /** The full goal list, in order. Goals keep their id (and outcome) when edited; omitted ones are deleted. */
   goals?: { id?: number; text: string }[];
@@ -119,7 +128,7 @@ export interface GameSummary {
   players: { id: number; name: string }[];
   round: { id: number; status: RoundStatus; startDate: string } | null;
   /** Something is waiting on this user: a move to lock in, a result to report, or (admins) join requests. */
-  todo: 'submit' | 'report' | 'requests' | null;
+  todo: 'goals' | 'bets' | 'report' | 'vote' | 'requests' | null;
   pendingRequests: number;
 }
 
@@ -140,6 +149,8 @@ export function emptyEntry(roundId: number, playerId: number): Entry {
     excuseReason: '',
     betPickId: null,
     betReason: '',
+    mvpVoteId: null,
+    voted: false,
     submitted: false,
     hidden: false,
     proofs: [],

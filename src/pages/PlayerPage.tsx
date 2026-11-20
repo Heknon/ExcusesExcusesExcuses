@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
-import { computeStats, entryPoints, isResolved, outcomesByPlayer, ratio } from '../../shared/scoring.ts';
-import type { Entry, Round } from '../../shared/types.ts';
+import { betHit, computeStats, entryPoints, isResolved, ratio, roundContext } from '../../shared/scoring.ts';
+import { isPrePlay, type Entry, type Round } from '../../shared/types.ts';
 import { useI18n } from '../i18n.tsx';
 import { GoalList } from '../goals.tsx';
 import { ProofStrip } from '../proofs.tsx';
@@ -54,6 +54,7 @@ export function PlayerPage({ playerId }: { playerId: number }) {
         <Tile value={fmt.percent(ratio(stats.callHits, stats.calls))} label={t.profile.callsRight} sub={t.profile.ofSub(stats.callHits, stats.calls)} />
         <Tile value={fmt.percent(ratio(stats.betHits, stats.bets))} label={t.profile.betsRight} sub={t.profile.ofSub(stats.betHits, stats.bets)} />
         <Tile value={stats.doubted} label={t.profile.doubted} sub={t.profile.backedSub(stats.backed)} />
+        <Tile value={stats.mvps} label={t.profile.mvps} sub={t.profile.mvpsSub(stats.mvps)} />
         <Tile value={stats.streak || '—'} label={t.profile.streak} sub={t.profile.streakSub} />
       </section>
 
@@ -61,7 +62,7 @@ export function PlayerPage({ playerId }: { playerId: number }) {
         <div className="form-strip" aria-label={t.profile.historyLabel}>
           {[...history].reverse().map(({ entry, round }) => (
             <Link key={round.id} to={round === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${round.id}`}>
-              <OutcomeDot outcome={round.status === 'planning' ? undefined : entry.outcome} title={`${fmt.shortDate(round.startDate)}: ${t.outcome[entry.outcome]}`} />
+              <OutcomeDot outcome={isPrePlay(round.status) ? undefined : entry.outcome} title={`${fmt.shortDate(round.startDate)}: ${t.outcome[entry.outcome]}`} />
             </Link>
           ))}
         </div>
@@ -97,14 +98,14 @@ function TimelineItem({ entry: e, round }: { entry: Entry; round: Round }) {
   const { lookup, gameId } = useGame();
   const { t, fmt } = useI18n();
   const roundEntries = lookup.entriesByRound.get(round.id) ?? [];
-  const outcomes = outcomesByPlayer(roundEntries);
-  const revealed = round.status !== 'planning';
+  const ctx = roundContext(roundEntries);
+  const revealed = !isPrePlay(round.status);
+  const final = round.status === 'final';
   const doubters = revealed ? roundEntries.filter((x) => x.excusePickId === e.playerId) : [];
   const backers = revealed ? roundEntries.filter((x) => x.betPickId === e.playerId) : [];
-  const verdict = (id: number | null, expected: 'done' | 'failed') => {
-    const o = id != null ? outcomes.get(id) : undefined;
-    return isResolved(o) ? o === expected : undefined;
-  };
+  const called = e.excusePickId != null ? ctx.outcomes.get(e.excusePickId) : undefined;
+  const callVerdict = isResolved(called) ? called === 'failed' : undefined;
+  const isMvp = final && (ctx.winners?.has(e.playerId) ?? false);
 
   return (
     <li className={`timeline-item outcome-${revealed ? e.outcome : 'none'}`}>
@@ -112,8 +113,13 @@ function TimelineItem({ entry: e, round }: { entry: Entry; round: Round }) {
         <Link to={round === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${round.id}`} className="timeline-date">
           {fmt.weekRange(round.startDate)}
         </Link>
-        {revealed ? <OutcomePill outcome={e.outcome} /> : <Pill icon="clock">{t.phase.planning}</Pill>}
-        {round.status === 'final' && <span className="muted small">{t.common.points(entryPoints(e, outcomes))}</span>}
+        {revealed ? <OutcomePill outcome={e.outcome} /> : <Pill icon="clock">{t.phase[round.status]}</Pill>}
+        {isMvp && (
+          <Pill icon="trophy" tone="planning">
+            {t.round.mvp}
+          </Pill>
+        )}
+        {final && <span className="muted small">{t.common.points(entryPoints(e, ctx))}</span>}
       </header>
       {e.goals.length ? (
         <div className="timeline-goals">
@@ -136,12 +142,12 @@ function TimelineItem({ entry: e, round }: { entry: Entry; round: Round }) {
       )}
       <dl className="facts">
         {!e.hidden && e.excusePickId != null && (
-          <Fact label={t.profile.calledOn} verdict={verdict(e.excusePickId, 'failed')}>
+          <Fact label={t.profile.calledOn} verdict={callVerdict}>
             <Who id={e.excusePickId} reason={e.excuseReason} />
           </Fact>
         )}
         {!e.hidden && e.betPickId != null && (
-          <Fact label={t.profile.backed} verdict={verdict(e.betPickId, 'done')}>
+          <Fact label={t.profile.backed} verdict={final ? betHit(e.betPickId, ctx) : undefined}>
             <Who id={e.betPickId} reason={e.betReason} />
           </Fact>
         )}

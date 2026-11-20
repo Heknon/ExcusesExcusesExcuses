@@ -55,6 +55,7 @@ export const ERRORS = {
   outcome_from_goals: 'Report results on each goal',
   goal_not_found: 'Goal not found',
   invalid_deadline: 'Invalid deadline',
+  vote_not_playing: 'You can only vote for someone in this round',
 } as const;
 
 export type ErrorCode = keyof typeof ERRORS;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { isResolved } from '../../shared/scoring.ts';
 import { search } from '../../shared/search.ts';
+import { isPrePlay } from '../../shared/types.ts';
 import { useI18n } from '../i18n.tsx';
 import { Link, navigate } from '../router.tsx';
 import { useGame } from '../session.tsx';
@@ -72,7 +73,7 @@ function RoundList() {
               <span className="round-row-side">
                 <span className="dots">
                   {entries.map((e) => (
-                    <OutcomeDot key={e.playerId} outcome={r.status === 'planning' ? undefined : e.outcome} title={`${lookup.name(e.playerId)}: ${t.outcome[e.outcome]}`} />
+                    <OutcomeDot key={e.playerId} outcome={isPrePlay(r.status) ? undefined : e.outcome} title={`${lookup.name(e.playerId)}: ${t.outcome[e.outcome]}`} />
                   ))}
                 </span>
                 <span className="muted small">{resolved ? t.history.deliveredOf(done, entries.length) : t.common.players(entries.length)}</span>
@@ -117,7 +118,7 @@ function SearchResults({ query }: { query: string }) {
               <Link to={h.round === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${h.round.id}`} className="muted">
                 {fmt.weekRange(h.round.startDate)}
               </Link>
-              {h.goal && h.round.status !== 'planning' && <OutcomePill outcome={h.goal.outcome} />}
+              {h.goal && !isPrePlay(h.round.status) && <OutcomePill outcome={h.goal.outcome} />}
             </div>
             <p className="search-hit-text" dir="auto">
               <Highlight text={h.text} query={query} />

@@ -129,77 +129,93 @@ describe('api', { skip: !URL_ && 'TEST_DATABASE_URL not set' }, () => {
     const caraSt: GameState = await cara.ok('GET', `/api/games/${g}`);
     assert.equal(caraSt.me.playerId, guestId);
 
-    // Round: only admins create; one open round at a time.
+    // Round: only admins create; one open round at a time. Rounds start with goals.
     assert.equal((await bob.call('POST', `/api/games/${g}/rounds`, { startDate: '2026-11-15' })).status, 403);
     const round = await admin.ok('POST', `/api/games/${g}/rounds`, { startDate: '2026-11-15' });
-    assert.equal(round.status, 'planning');
+    assert.equal(round.status, 'goals');
     assert.equal((await admin.call('POST', `/api/games/${g}/rounds`, { startDate: '2026-11-22' })).status, 409);
     const entry = (c: ReturnType<typeof client>, pid: number, body: unknown) =>
       c.call('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${pid}`, body);
+    const ok = (c: ReturnType<typeof client>, pid: number, body: unknown) =>
+      c.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${pid}`, body);
+    const phase = (status: string) => admin.ok('PATCH', `/api/games/${g}/rounds/${round.id}`, { status });
 
-    // Planning: everyone locks in their move; picks stay secret.
-    assert.equal((await entry(bob, ids.Bob, { goals: [{ text: 'Run 5k' }], excusePickId: ids.Bob })).status, 400, 'no self-picks');
+    // 1. Goals: shared openly; no picks yet.
     assert.equal((await entry(bob, ids.Admin, { goals: [{ text: 'hijack' }] })).status, 403, 'only your own entry');
-    assert.equal((await entry(bob, ids.Bob, { outcome: 'done' })).status, 403, 'no results during planning');
-    await bob.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids.Bob}`, {
-      goals: [{ text: 'Run 5k' }, { text: 'Stretch daily' }], excusePickId: ids['Cara (guest)'], excuseReason: 'busy week', betPickId: ids.Admin, betReason: 'focused', submitted: true,
-    });
-    await cara.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids['Cara (guest)']}`, {
-      goals: [{ text: 'Read 50 pages' }], excusePickId: ids.Bob, betPickId: ids.Admin, submitted: true,
-    });
-    await admin.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids.Admin}`, {
-      goals: [{ text: 'Ship it' }], excusePickId: ids.Bob, betPickId: ids['Cara (guest)'], submitted: true,
-    });
-    assert.equal((await entry(admin, ids.Bob, { excusePickId: ids.Admin })).status, 403, 'admins can’t touch secret picks');
+    assert.equal((await entry(bob, ids.Bob, { excusePickId: ids.Admin })).status, 403, 'no bets before the bets phase');
+    await ok(bob, ids.Bob, { goals: [{ text: 'Run 5k' }, { text: 'Stretch daily' }] });
+    await ok(cara, ids['Cara (guest)'], { goals: [{ text: 'Read 50 pages' }] });
+    await ok(admin, ids.Admin, { goals: [{ text: 'Ship it' }] });
     const { id: dana } = await admin.ok('POST', `/api/games/${g}/players`, { name: 'Dana' });
-    await admin.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${dana}`, { goals: [{ text: 'Swim' }], betPickId: ids.Bob, submitted: true });
-    const guestSeen: GameState = await admin.ok('GET', `/api/games/${g}`);
-    assert.equal(guestSeen.entries.find((e) => e.playerId === dana)!.betPickId, ids.Bob, 'admins see the guest picks they entered');
-    const guestHidden: GameState = await bob.ok('GET', `/api/games/${g}`);
-    assert.equal(guestHidden.entries.find((e) => e.playerId === dana)!.hidden, true, 'other players don’t');
+    await ok(admin, dana, { goals: [{ text: 'Swim' }] });
+    const goalsSeen: GameState = await cara.ok('GET', `/api/games/${g}`);
+    assert.deepEqual(
+      goalsSeen.entries.find((e) => e.playerId === ids.Bob)!.goals.map((x) => x.text),
+      ['Run 5k', 'Stretch daily'],
+      'everyone sees goals as they are written',
+    );
+
+    // 2. Bets: goals lock; picks are secret.
+    assert.equal((await bob.call('PATCH', `/api/games/${g}/rounds/${round.id}`, { status: 'bets' })).status, 403);
+    await phase('bets');
+    assert.equal((await entry(bob, ids.Bob, { goals: [{ text: 'changed my mind' }] })).status, 403, 'goals lock once betting starts');
+    assert.equal((await entry(bob, ids.Bob, { excusePickId: ids.Bob })).status, 400, 'no self-picks');
+    await ok(bob, ids.Bob, { excusePickId: ids['Cara (guest)'], excuseReason: 'busy week', betPickId: ids.Admin, betReason: 'focused', submitted: true });
+    await ok(cara, ids['Cara (guest)'], { excusePickId: ids.Bob, betPickId: ids.Admin, submitted: true });
+    await ok(admin, ids.Admin, { excusePickId: ids.Bob, betPickId: ids['Cara (guest)'], submitted: true });
+    assert.equal((await entry(admin, ids.Bob, { excusePickId: ids.Admin })).status, 403, 'admins can’t touch secret picks');
+    await ok(admin, dana, { betPickId: ids.Bob, submitted: true });
 
     const seen: GameState = await admin.ok('GET', `/api/games/${g}`);
     const bobSeen = seen.entries.find((e) => e.playerId === ids.Bob)!;
     assert.equal(bobSeen.hidden, true);
     assert.equal(bobSeen.excusePickId, null);
-    assert.deepEqual(bobSeen.goals.map((x) => x.text), ['Run 5k', 'Stretch daily']);
     assert.equal(bobSeen.submitted, true);
+    assert.equal(seen.entries.find((e) => e.playerId === dana)!.betPickId, ids.Bob, 'admins see the guest picks they entered');
     const own: GameState = await bob.ok('GET', `/api/games/${g}`);
     assert.equal(own.entries.find((e) => e.playerId === ids.Bob)!.excusePickId, ids['Cara (guest)']);
+    assert.equal(own.entries.find((e) => e.playerId === dana)!.hidden, true, 'other players don’t');
 
-    // Live: picks revealed, players report their own results.
-    assert.equal((await bob.call('PATCH', `/api/games/${g}/rounds/${round.id}`, { status: 'live' })).status, 403);
-    await admin.ok('PATCH', `/api/games/${g}/rounds/${round.id}`, { status: 'live' });
+    // 3. The week: picks revealed; results per goal; secret votes for most impressive.
+    await phase('live');
     const live: GameState = await admin.ok('GET', `/api/games/${g}`);
     assert.equal(live.entries.find((e) => e.playerId === ids.Bob)!.excusePickId, ids['Cara (guest)']);
-    assert.equal((await entry(bob, ids.Bob, { goals: [{ text: 'changed my mind' }] })).status, 403, 'goals lock when live');
+    assert.equal((await entry(bob, ids.Bob, { betPickId: ids.Bob })).status, 403, 'bets lock when the week starts');
     const bobGoals = live.entries.find((e) => e.playerId === ids.Bob)!.goals;
     assert.equal((await entry(bob, ids.Bob, { outcome: 'done' })).data.code, 'outcome_from_goals', 'results go on goals');
-    await bob.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids.Bob}`, { goalOutcomes: { [bobGoals[0].id]: 'failed' } });
+    await ok(bob, ids.Bob, { goalOutcomes: { [bobGoals[0].id]: 'failed' } });
     let mid: GameState = await bob.ok('GET', `/api/games/${g}`);
     assert.equal(mid.entries.find((e) => e.playerId === ids.Bob)!.outcome, 'pending', 'pending until every goal is reported');
-    await bob.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids.Bob}`, {
-      goalOutcomes: { [bobGoals[1].id]: 'done' },
-      excuse: 'Rain all week',
-    });
+    await ok(bob, ids.Bob, { goalOutcomes: { [bobGoals[1].id]: 'done' }, excuse: 'Rain all week' });
     mid = await bob.ok('GET', `/api/games/${g}`);
     assert.equal(mid.entries.find((e) => e.playerId === ids.Bob)!.outcome, 'partial', 'one done, one missed');
     assert.equal((await entry(bob, ids.Bob, { goalOutcomes: { 999999: 'done' } })).status, 404);
-    await bob.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids.Bob}`, { goalOutcomes: { [bobGoals[1].id]: 'failed' } });
+    await ok(bob, ids.Bob, { goalOutcomes: { [bobGoals[1].id]: 'failed' } });
     const caraGoal = live.entries.find((e) => e.playerId === ids['Cara (guest)'])!.goals[0];
-    await cara.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids['Cara (guest)']}`, { goalOutcomes: { [caraGoal.id]: 'done' } });
+    await ok(cara, ids['Cara (guest)'], { goalOutcomes: { [caraGoal.id]: 'done' } });
     const adminGoal = live.entries.find((e) => e.playerId === ids.Admin)!.goals[0];
-    await admin.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids.Admin}`, { goalOutcomes: { [adminGoal.id]: 'done' } });
+    await ok(admin, ids.Admin, { goalOutcomes: { [adminGoal.id]: 'done' } });
+
+    assert.equal((await entry(bob, ids.Bob, { mvpVoteId: ids.Bob })).status, 400, 'no voting for yourself');
+    assert.equal((await entry(admin, ids.Bob, { mvpVoteId: ids.Admin })).status, 403, 'nobody votes for an account');
+    await ok(bob, ids.Bob, { mvpVoteId: ids.Admin });
+    await ok(cara, ids['Cara (guest)'], { mvpVoteId: ids.Admin });
+    await ok(admin, ids.Admin, { mvpVoteId: ids['Cara (guest)'] });
+    const votes: GameState = await cara.ok('GET', `/api/games/${g}`);
+    const bobVote = votes.entries.find((e) => e.playerId === ids.Bob)!;
+    assert.equal(bobVote.voted, true);
+    assert.equal(bobVote.mvpVoteId, null, 'votes stay secret until scoring');
 
     // Any player can add round notes; only admins finalize.
     await bob.ok('PATCH', `/api/games/${g}/rounds/${round.id}`, { notes: 'Rainy week' });
-    await admin.ok('PATCH', `/api/games/${g}/rounds/${round.id}`, { status: 'final' });
-    assert.equal((await entry(bob, ids.Bob, { outcome: 'done' })).status, 403, 'results lock when final');
-    await bob.ok('PATCH', `/api/games/${g}/rounds/${round.id}/entries/${ids.Bob}`, { notes: 'Try mornings' });
+    await phase('final');
+    assert.equal((await entry(bob, ids.Bob, { goalOutcomes: { [bobGoals[0].id]: 'done' } })).status, 403, 'results lock when final');
+    await ok(bob, ids.Bob, { notes: 'Try mornings' });
 
     const final: GameState = await bob.ok('GET', `/api/games/${g}`);
     assert.equal(final.rounds[0].notes, 'Rainy week');
     assert.equal(final.entries.find((e) => e.playerId === ids.Bob)!.notes, 'Try mornings');
+    assert.equal(final.entries.find((e) => e.playerId === ids.Bob)!.mvpVoteId, ids.Admin, 'votes are revealed once scored');
     assert.equal(final.entries.find((e) => e.playerId === ids.Bob)!.outcome, 'failed');
     assert.equal(final.entries.find((e) => e.playerId === ids['Cara (guest)'])!.outcome, 'done');
   });
@@ -313,7 +329,9 @@ describe('api', { skip: !URL_ && 'TEST_DATABASE_URL not set' }, () => {
     const me = (await a.ok('GET', `/api/games/${g}`)).me.playerId;
     const url = `/api/games/${g}/rounds/${round.id}/entries/${me}`;
 
-    assert.equal((await a.call('PATCH', url, { submitted: true })).data.code, 'goal_required');
+    await a.ok('PATCH', `/api/games/${g}/rounds/${round.id}`, { status: 'bets' });
+    assert.equal((await a.call('PATCH', url, { submitted: true })).data.code, 'goal_required', 'no betting without goals');
+    await a.ok('PATCH', `/api/games/${g}/rounds/${round.id}`, { status: 'goals' });
     const six = Array.from({ length: 6 }, (_, i) => ({ text: `goal ${i}` }));
     assert.equal((await a.call('PATCH', url, { goals: six })).data.code, 'too_many_goals');
     await a.ok('PATCH', url, { goals: [{ text: 'A' }, { text: '  ' }, { text: 'B' }] });

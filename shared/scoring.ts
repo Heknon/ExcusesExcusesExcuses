@@ -6,8 +6,10 @@ export const POINTS = {
   failed: 0,
   /** Called excuses on someone who then missed. */
   callHit: 1,
-  /** Bet on someone who then delivered. */
+  /** Bet on the player the group voted most impressive. */
   betHit: 1,
+  /** Voted most impressive by the group (ties share it). */
+  mvp: 2,
 } as const;
 
 export interface PlayerStats {
@@ -28,6 +30,8 @@ export interface PlayerStats {
   backed: number;
   /** Consecutive most-recent resolved rounds marked done. */
   streak: number;
+  /** Rounds where the group voted this player most impressive. */
+  mvps: number;
 }
 
 /**
@@ -52,11 +56,48 @@ export function outcomesByPlayer(entries: Entry[]): Map<number, Outcome> {
   return new Map(entries.map((e) => [e.playerId, e.outcome]));
 }
 
-/** Points one entry earned, given everyone's outcomes that round. */
-export function entryPoints(entry: Entry, outcomes: Map<number, Outcome>): number {
+/**
+ * Who the group voted most impressive in a round: everyone tied for the most votes.
+ * Null when nobody voted (votes are hidden until a round is final, and older rounds predate voting).
+ */
+export function mvpWinners(entries: Entry[]): Set<number> | null {
+  const votes = new Map<number, number>();
+  for (const e of entries) if (e.mvpVoteId != null) votes.set(e.mvpVoteId, (votes.get(e.mvpVoteId) ?? 0) + 1);
+  const top = Math.max(0, ...votes.values());
+  if (!top) return null;
+  return new Set([...votes].filter(([, n]) => n === top).map(([id]) => id));
+}
+
+export function mvpVotes(entries: Entry[]): Map<number, number> {
+  const votes = new Map<number, number>();
+  for (const e of entries) if (e.mvpVoteId != null) votes.set(e.mvpVoteId, (votes.get(e.mvpVoteId) ?? 0) + 1);
+  return votes;
+}
+
+/** What scoring needs to know about a round as a whole. */
+export interface RoundContext {
+  outcomes: Map<number, Outcome>;
+  winners: Set<number> | null;
+}
+
+export function roundContext(entries: Entry[]): RoundContext {
+  return { outcomes: outcomesByPlayer(entries), winners: mvpWinners(entries) };
+}
+
+/** Whether a bet came true. Rounds without a vote fall back to the older rule: the pick delivered. */
+export function betHit(betPickId: number | null, ctx: RoundContext): boolean | undefined {
+  if (betPickId == null) return undefined;
+  if (ctx.winners) return ctx.winners.has(betPickId);
+  const o = ctx.outcomes.get(betPickId);
+  return isResolved(o) ? o === 'done' : undefined;
+}
+
+/** Points one entry earned, given the rest of the round. */
+export function entryPoints(entry: Entry, ctx: RoundContext): number {
   let points = isResolved(entry.outcome) ? POINTS[entry.outcome] : 0;
-  if (entry.excusePickId != null && outcomes.get(entry.excusePickId) === 'failed') points += POINTS.callHit;
-  if (entry.betPickId != null && outcomes.get(entry.betPickId) === 'done') points += POINTS.betHit;
+  if (entry.excusePickId != null && ctx.outcomes.get(entry.excusePickId) === 'failed') points += POINTS.callHit;
+  if (betHit(entry.betPickId, ctx)) points += POINTS.betHit;
+  if (ctx.winners?.has(entry.playerId)) points += POINTS.mvp;
   return points;
 }
 
@@ -70,7 +111,7 @@ export function computeStats(players: Player[], rounds: Round[], entries: Entry[
       p.id,
       {
         playerId: p.id, points: 0, rounds: 0, done: 0, partial: 0, failed: 0,
-        callHits: 0, calls: 0, betHits: 0, bets: 0, doubted: 0, backed: 0, streak: 0,
+        callHits: 0, calls: 0, betHits: 0, bets: 0, doubted: 0, backed: 0, streak: 0, mvps: 0,
       },
     ]),
   );
@@ -79,7 +120,12 @@ export function computeStats(players: Player[], rounds: Round[], entries: Entry[
 
   for (const round of newestFirst) {
     const roundEntries = entries.filter((e) => e.roundId === round.id);
-    const outcomes = outcomesByPlayer(roundEntries);
+    const ctx = roundContext(roundEntries);
+    const { outcomes } = ctx;
+    for (const id of ctx.winners ?? []) {
+      const w = stats.get(id);
+      if (w) w.mvps++;
+    }
 
     for (const e of roundEntries) {
       const s = stats.get(e.playerId);
@@ -107,12 +153,12 @@ export function computeStats(players: Player[], rounds: Round[], entries: Entry[
         s.calls++;
         if (called === 'failed') s.callHits++;
       }
-      const backed = e.betPickId != null ? outcomes.get(e.betPickId) : undefined;
-      if (isResolved(backed)) {
+      const hit = betHit(e.betPickId, ctx);
+      if (hit !== undefined) {
         s.bets++;
-        if (backed === 'done') s.betHits++;
+        if (hit) s.betHits++;
       }
-      s.points += entryPoints(e, outcomes);
+      s.points += entryPoints(e, ctx);
     }
   }
 

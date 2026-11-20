@@ -41,7 +41,7 @@ const SCHEMA = `
     start_date DATE NOT NULL,
     title TEXT NOT NULL DEFAULT '',
     notes TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'planning' CHECK (status IN ('planning', 'live', 'final')),
+    status TEXT NOT NULL DEFAULT 'goals' CHECK (status IN ('goals', 'bets', 'live', 'final')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (game_id, start_date)
   );
@@ -99,6 +99,15 @@ const SCHEMA = `
     RETURNING round_id, player_id
   )
   UPDATE round_entries e SET goal = '' FROM moved m WHERE e.round_id = m.round_id AND e.player_id = m.player_id;
+
+  -- Rounds split 'planning' into 'goals' then 'bets'. Rounds still in planning go back to goals.
+  ALTER TABLE rounds DROP CONSTRAINT IF EXISTS rounds_status_check;
+  UPDATE rounds SET status = 'goals' WHERE status = 'planning';
+  ALTER TABLE rounds ADD CONSTRAINT rounds_status_check CHECK (status IN ('goals', 'bets', 'live', 'final'));
+  ALTER TABLE rounds ALTER COLUMN status SET DEFAULT 'goals';
+
+  -- Each player's secret vote for the most impressive week.
+  ALTER TABLE round_entries ADD COLUMN IF NOT EXISTS mvp_vote_id INTEGER REFERENCES players(id) ON DELETE SET NULL;
 `;
 
 // DATE columns as plain 'YYYY-MM-DD' strings, never JS Dates (no timezone shifts).

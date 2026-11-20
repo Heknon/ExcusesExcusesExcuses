@@ -694,8 +694,8 @@ button.start-tile:hover { box-shadow: var(--shadow); border-color: var(--line-2)
 .final-points { font-family: var(--font-display); font-size: 64px; font-weight: 800; letter-spacing: var(--display-tracking); line-height: 1; }
 .final-label { color: var(--ink-2); font-weight: 600; }
 .final-breakdown { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 0; }
-.final-breakdown li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
-.final-breakdown li > span { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.final-breakdown > li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.final-breakdown > li > span { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .outcome-text { font-weight: 700; }
 .outcome-text.is-done { color: var(--done); }
 .outcome-text.is-partial { color: var(--partial); }
@@ -1428,4 +1428,49 @@ span.goal-list { display: grid; }
 .goal-choice { white-space: nowrap; }
 @media (max-width: 720px) {
   .goal-choice { padding: 0 6px; gap: 4px; font-size: 12.5px; }
+}
+
+/* =========================================================
+   Goals → bets → week → final
+   ========================================================= */
+.pill-goals, .pill-bets { background: var(--accent-soft); color: var(--accent-ink); }
+.move-lede { margin: -8px 0 16px; }
+.move-foot-note { margin-top: 12px; }
+.eyebrow-icon { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Most-impressive vote */
+:root { --gold: #b7791f; --gold-soft: #fdf1d8; }
+@media (prefers-color-scheme: dark) { :root { --gold: #f2b84b; --gold-soft: #33280f; } }
+.move-vote { margin-top: 14px; }
+.move-vote::before { background: var(--gold); }
+.move-vote .eyebrow { color: var(--gold); }
+.picker-vote .picker-option[aria-checked='true'] { border-color: var(--gold); background: var(--gold-soft); }
+.picker-vote .picker-check { background: var(--gold); }
+
+.mvp-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 20px;
+  padding: 16px 20px;
+  border-radius: var(--r);
+  background: var(--gold-soft);
+  border: 1px solid color-mix(in srgb, var(--gold) 35%, var(--line));
+}
+.mvp-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--gold); color: #fff; flex-shrink: 0; }
+.mvp-body { display: grid; gap: 4px; min-width: 0; }
+.mvp-body .eyebrow { color: var(--gold); }
+.mvp-names { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 800; font-size: 20px; }
+.mvp-names .avatar + .avatar { margin-inline-start: -14px; }
+.mvp-votes { margin-inline-start: auto; font-weight: 700; color: var(--gold); white-space: nowrap; }
+.mvp-tag { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 6px; background: var(--gold-soft); color: var(--gold); font-size: 11px; font-weight: 700; }
+.final-mvp > span { display: inline-flex; align-items: center; gap: 6px; color: var(--gold); font-weight: 700; }
+.trow-detail-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.mini-bet { background: var(--gold-soft); color: var(--gold); }
+.picker-bet .picker-option[aria-checked='true'] { border-color: var(--gold); background: var(--gold-soft); }
+.picker-bet .picker-check { background: var(--gold); }
+
+@media (max-width: 720px) {
+  .phases .phase-marker { width: 26px; height: 26px; font-size: 12px; }
+  .phase + .phase::before { margin: 0 6px; }
 }

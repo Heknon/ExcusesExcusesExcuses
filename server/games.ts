@@ -2,6 +2,7 @@ import { randomInt } from 'node:crypto';
 import {
   OUTCOMES,
   ROUND_STATUSES,
+  isPrePlay,
   type Entry,
   type EntryPatch,
   type GameState,
@@ -46,7 +47,7 @@ const toRound = (r: any): Round => ({
   status: r.status,
 });
 
-function toEntry(r: any, hidden: boolean, proofs: Proof[] = [], goals: Goal[] = []): Entry {
+function toEntry(r: any, hidden: boolean, voteHidden: boolean, proofs: Proof[] = [], goals: Goal[] = []): Entry {
   return {
     roundId: r.round_id,
     playerId: r.player_id,
@@ -58,6 +59,8 @@ function toEntry(r: any, hidden: boolean, proofs: Proof[] = [], goals: Goal[] = 
     excuseReason: hidden ? '' : r.excuse_reason,
     betPickId: hidden ? null : r.bet_pick_id,
     betReason: hidden ? '' : r.bet_reason,
+    mvpVoteId: voteHidden ? null : r.mvp_vote_id,
+    voted: r.mvp_vote_id != null,
     submitted: r.submitted_at != null,
     hidden,
     proofs,
@@ -72,6 +75,7 @@ const ENTRY_COLUMNS = {
   excuseReason: 'excuse_reason',
   betPickId: 'bet_pick_id',
   betReason: 'bet_reason',
+  mvpVoteId: 'mvp_vote_id',
 } as const;
 
 type EntryField = keyof EntryPatch;
@@ -79,8 +83,9 @@ const PICKS: EntryField[] = ['excusePickId', 'excuseReason', 'betPickId', 'betRe
 
 /** What a player may change on their own entry in each phase. */
 const SELF_EDITABLE: Record<RoundStatus, EntryField[]> = {
-  planning: ['goals', ...PICKS, 'submitted', 'notes'],
-  live: ['goalOutcomes', 'outcome', 'excuse', 'notes'],
+  goals: ['goals', 'notes'],
+  bets: [...PICKS, 'submitted', 'notes'],
+  live: ['goalOutcomes', 'outcome', 'excuse', 'notes', 'mvpVoteId'],
   final: ['notes'],
 };
 
@@ -152,7 +157,7 @@ export function gameService(pool: Pool) {
   async function seatInPlanningRound(q: Queryable, gameId: number, playerId: number) {
     await q.query(
       `INSERT INTO round_entries (round_id, player_id)
-       SELECT id, $2 FROM rounds WHERE game_id = $1 AND status = 'planning'
+       SELECT id, $2 FROM rounds WHERE game_id = $1 AND status IN ('goals', 'bets')
        ON CONFLICT DO NOTHING`,
       [gameId, playerId],
     );
@@ -185,11 +190,16 @@ export function gameService(pool: Pool) {
         let todo: GameSummary['todo'] = null;
         if (r.status === 'active' && r.round && r.round.status !== 'final') {
           const { rows: e } = await pool.query(
-            'SELECT outcome, submitted_at FROM round_entries WHERE round_id = $1 AND player_id = $2',
+            `SELECT e.outcome, e.submitted_at, e.mvp_vote_id,
+               (SELECT count(*)::int FROM entry_goals g WHERE g.round_id = e.round_id AND g.player_id = e.player_id) AS goals
+             FROM round_entries e WHERE e.round_id = $1 AND e.player_id = $2`,
             [r.round.id, r.player_id],
           );
-          if (e[0] && r.round.status === 'planning' && !e[0].submitted_at) todo = 'submit';
-          if (e[0] && r.round.status === 'live' && e[0].outcome === 'pending') todo = 'report';
+          const mine = e[0];
+          if (mine && r.round.status === 'goals' && mine.goals === 0) todo = 'goals';
+          if (mine && r.round.status === 'bets' && !mine.submitted_at) todo = 'bets';
+          if (mine && r.round.status === 'live' && mine.outcome === 'pending') todo = 'report';
+          else if (mine && r.round.status === 'live' && mine.mvp_vote_id == null) todo = 'vote';
         }
         const isAdmin = r.role === 'admin' && r.status === 'active';
         if (!todo && isAdmin && r.pending > 0) todo = 'requests';
@@ -310,12 +320,13 @@ export function gameService(pool: Pool) {
             joinedAt: p.created_at.toISOString(),
           })),
         rounds: rounds.rows.map(toRound),
-        // Calls and bets stay secret until the round goes live — from admins too, except for
-        // guests (no account), whose picks an admin enters on their behalf.
+        // Calls and bets stay secret until the admin reveals them, and votes until the round is scored —
+        // from admins too, except for guests (no account), whose moves an admin makes on their behalf.
         entries: entries.rows.map((e) =>
           toEntry(
             e,
-            roundStatus.get(e.round_id) === 'planning' && e.player_id !== me.id && !(isAdmin && e.is_guest),
+            isPrePlay(roundStatus.get(e.round_id)!) && e.player_id !== me.id && !(isAdmin && e.is_guest),
+            roundStatus.get(e.round_id) !== 'final' && e.player_id !== me.id && !(isAdmin && e.is_guest),
             proofsByEntry.get(`${e.round_id}:${e.player_id}`),
             goalsByEntry.get(`${e.round_id}:${e.player_id}`),
           ),
@@ -385,7 +396,7 @@ export function gameService(pool: Pool) {
             // Drop them from a round that hasn't started; keep history.
             await c.query(
               `DELETE FROM round_entries e USING rounds r
-               WHERE e.round_id = r.id AND r.game_id = $1 AND r.status = 'planning' AND e.player_id = $2`,
+               WHERE e.round_id = r.id AND r.game_id = $1 AND r.status IN ('goals', 'bets') AND e.player_id = $2`,
               [gameId, target.id],
             );
             return { id: target.id };
@@ -507,9 +518,12 @@ export function gameService(pool: Pool) {
 
       for (const f of fields) {
         if (isSelf && SELF_EDITABLE[round.status].includes(f)) continue;
-        // Admins can fix anything, except another account's secret picks before the reveal.
-        // Guests have no account, so the admin plays their picks for them.
-        const secret = round.status === 'planning' && !isSelf && target.user_id != null && (PICKS.includes(f) || f === 'submitted');
+        // Admins can fix anything, except another account's secret picks and vote.
+        // Guests have no account, so the admin plays their moves for them.
+        const secret =
+          !isSelf &&
+          target.user_id != null &&
+          (f === 'mvpVoteId' || (isPrePlay(round.status) && (PICKS.includes(f) || f === 'submitted')));
         if (me.role === 'admin' && !secret) continue;
         throw new HttpError(403, isSelf ? 'locked_phase' : 'own_entry_only');
       }
@@ -532,6 +546,14 @@ export function gameService(pool: Pool) {
             if (pick.id === playerId) throw new HttpError(400, 'self_pick');
             if (pick.status !== 'active') throw new HttpError(400, 'pick_not_playing');
             value = pick.id;
+          } else value = null;
+        } else if (f === 'mvpVoteId') {
+          if (value != null) {
+            const id = Number(value);
+            if (id === playerId) throw new HttpError(400, 'self_pick');
+            const inRound = await pool.query('SELECT 1 FROM round_entries WHERE round_id = $1 AND player_id = $2', [roundId, id]);
+            if (!inRound.rows.length) throw new HttpError(400, 'vote_not_playing');
+            value = id;
           } else value = null;
         } else {
           value = String(value ?? '').trim();
@@ -618,7 +640,7 @@ export function gameService(pool: Pool) {
       const round = await roundInGame(pool, gameId, roundId);
       const target = await playerInGame(pool, gameId, playerId);
       if (target.id !== me.id && me.role !== 'admin') throw new HttpError(403, 'own_entry_only');
-      if (round.status === 'planning') throw new HttpError(400, 'proof_phase');
+      if (isPrePlay(round.status)) throw new HttpError(400, 'proof_phase');
       if (bytes.length > PROOF_MAX_BYTES) throw new HttpError(413, 'proof_too_large');
       const mime = sniffImage(bytes);
       if (!mime) throw new HttpError(415, 'proof_not_image');

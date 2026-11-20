@@ -1,19 +1,17 @@
 # Excuses Excuses Excuses
 
-A weekly game for a group of friends. Every round (one week), each player:
+A weekly game for a group of friends, built around the way the group plays it sitting together.
+Each round (one week) goes through four phases:
 
-1. **Commits** to one to five goals for the week.
-2. **Calls excuses** on one player they think won't deliver.
-3. **Bets** on one player they think will.
-
-Calls and bets are secret until the admin starts the week. At the end of the week everyone reports how it
-went — done, partly or missed for each goal, plus an excuse — and the round is scored. Each round has a
-deadline the admin sets (by default the end of the week), with a countdown for everyone.
+1. **Goals:** everyone shares one to five goals for the week. Goals are visible to everyone as they're written.
+2. **Bets:** once everyone knows each other's goals, each player picks **who'll come back with excuses**
+   and **who'll have the most impressive week**, each with a reason. Picks stay secret until the admin reveals them.
+3. **The week:** bets are revealed. Everyone reports each goal (done, partly or missed), adds an excuse
+   or proof if they like, and casts a secret vote for **the most impressive week**.
+4. **Final:** the round is scored and the votes are revealed.
 
 A week's result comes from its goals: all done → done, all missed → missed, anything in between → partly.
-
-Over time the game builds into a record of what everyone set out to do, what happened, and how well the
-group reads each other.
+Each round has a deadline the admin sets (by default the end of the week), with a countdown for everyone.
 
 ## How it works
 
@@ -23,8 +21,7 @@ group reads each other.
 - **Guests:** admins can add players who don't have an account yet and play their moves for them. When that
   person signs up and asks to join, the admin can let them in *as* the guest. The account takes over the
   seat and all its history.
-- **Rounds:** *Planning* (players lock in a goal, call and bet; picks hidden) → *In progress* (picks revealed;
-  players report results and excuses) → *Final* (scored). The admin moves the round between phases.
+- **Rounds:** the admin moves each round through goals → bets → the week → final, and can step back if needed.
 - **History:** every round stays browsable. Each player has a profile with their full record: goals,
   outcomes, excuses, notes, and who doubted or backed them and why. Search covers everything.
 - **Standings:** points, delivery rate, how often your reads are right, streaks, and a round-by-round grid.
@@ -42,12 +39,14 @@ group reads each other.
 
 | | points |
 |---|---|
-| goal done | 3 |
-| goal partly done | 1 |
-| goal missed | 0 |
+| goals done | 3 |
+| goals partly done | 1 |
+| goals missed | 0 |
 | called excuses on someone who then missed | +1 |
-| bet on someone who then delivered | +1 |
+| bet on the player the group voted most impressive | +1 |
+| voted most impressive by the group (ties share it) | +2 |
 
+Rounds from before voting existed keep the older bet rule (the pick delivered).
 Change the numbers in `shared/scoring.ts`. Standings count scored (final) rounds only.
 
 ## Running

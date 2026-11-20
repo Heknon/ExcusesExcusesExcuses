@@ -159,7 +159,7 @@ export function OutcomeDot({ outcome, title }: { outcome?: Outcome; title: strin
   return <span className={`dot dot-${outcome ?? 'none'}`} title={title} aria-label={title} role="img" />;
 }
 
-const PHASES: RoundStatus[] = ['planning', 'live', 'final'];
+const PHASES: RoundStatus[] = ['goals', 'bets', 'live', 'final'];
 
 export function PhaseSteps({ status }: { status: RoundStatus }) {
   const { t } = useI18n();
@@ -213,7 +213,7 @@ export function PlayerPicker(props: {
   value: number | null;
   onChange: (id: number | null) => void;
   label: string;
-  tone: 'call' | 'bet';
+  tone: 'call' | 'bet' | 'vote';
 }) {
   return (
     <div className={`picker picker-${props.tone}`} role="radiogroup" aria-label={props.label}>
