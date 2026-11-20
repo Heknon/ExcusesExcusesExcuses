@@ -1,17 +1,17 @@
-FROM node:22-alpine AS build
+FROM oven/bun:1.4.4-alpine AS build
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 COPY . .
-RUN npm run build
+RUN bun run build
 
-FROM node:22-alpine
+FROM oven/bun:1.4.4-alpine
 WORKDIR /app
 ENV NODE_ENV=production PORT=3000
-COPY package*.json ./
-RUN npm ci --omit=dev
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
 COPY --from=build /app/dist ./dist
 COPY server ./server
 COPY shared ./shared
 EXPOSE 3000
-CMD ["node", "server/index.ts"]
+CMD ["bun", "server/index.ts"]

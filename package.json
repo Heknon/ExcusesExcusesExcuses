@@ -3,17 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": {
-    "node": ">=22.18"
-  },
+  "packageManager": "bun@1.4.4",
   "scripts": {
-    "dev": "node --env-file-if-exists=.env --watch server/index.ts & vite",
-    "dev:server": "node --env-file-if-exists=.env --watch server/index.ts",
+    "dev": "bun run --parallel dev:server dev:client",
+    "dev:server": "bun --watch server/index.ts",
     "dev:client": "vite",
+    "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
-    "start": "NODE_ENV=production node server/index.ts",
-    "test": "node --test tests/*.test.ts",
-    "build:vercel": "npm run build && node scripts/build-vercel.mjs"
+    "start": "NODE_ENV=production bun server/index.ts",
+    "test": "bun test",
+    "check": "tsc --noEmit && bun test",
+    "test:full": "bun scripts/test-full.ts",
+    "db:migrate:deploy": "bun scripts/migrate.ts",
+    "build:vercel": "bun run build && bun scripts/build-vercel.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
@@ -28,6 +30,10 @@
     "vite": "^8.3.8"
   },
   "dependencies": {
+    "@auth/core": "^0.41.3",
+    "@aws-sdk/client-s3": "^3.1173.0",
+    "@aws-sdk/s3-request-presigner": "^3.1173.0",
+    "@vercel/oidc-aws-credentials-provider": "^3.3.21",
     "pg": "^8.23.1"
   }
 }
