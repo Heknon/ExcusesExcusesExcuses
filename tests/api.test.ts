@@ -312,7 +312,7 @@ describe('api', { skip: !URL_ && 'TEST_DATABASE_URL not set' }, () => {
 
     for (let i = 0; i < 5; i++) assert.equal((await p1.upload(url(req.id), JPEG)).status, 200);
     assert.equal((await p1.upload(url(req.id), JPEG)).data.code, 'proof_limit');
-    const big = Buffer.concat([JPEG, Buffer.alloc(6 * 1024 * 1024)]);
+    const big = Buffer.concat([JPEG, Buffer.alloc(5 * 1024 * 1024)]);
     assert.equal((await admin.upload(url(adminId), big)).status, 413);
 
     assert.equal((await outsider.call('DELETE', `/api/proofs/${up.data.id}`, {})).status, 404);

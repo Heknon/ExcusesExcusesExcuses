@@ -102,7 +102,7 @@ function parseDeadline(value: unknown, startDate: string): string {
   return new Date(t).toISOString();
 }
 
-export const PROOF_MAX_BYTES = 5 * 1024 * 1024;
+export const PROOF_MAX_BYTES = 4 * 1024 * 1024; // under Vercel's 4.5 MB request limit
 const PROOFS_PER_ENTRY = 6;
 
 /** Identify an image by its first bytes, never by what the client claims. */

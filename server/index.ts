@@ -77,7 +77,8 @@ interface Ctx {
 type Handler = (ctx: Ctx & { user: User }) => Promise<unknown>;
 type PublicHandler = (ctx: Ctx) => Promise<{ body: unknown; cookie?: string | null } | unknown>;
 
-export function createApp(pool: Pool) {
+/** The whole app as a plain Node request handler: used by the local server and by the Vercel function. */
+export function createHandler(pool: Pool) {
   const auth = authService(pool);
   const games = gameService(pool);
 
@@ -129,7 +130,7 @@ export function createApp(pool: Pool) {
     }],
   ];
 
-  return createServer(async (req, res) => {
+  return async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (!url.pathname.startsWith('/api/')) return serveStatic(url.pathname, res);
 
@@ -193,7 +194,11 @@ export function createApp(pool: Pool) {
       console.error(err);
       return send(res, 500, { error: 'Something went wrong', code: 'server_error' });
     }
-  });
+  };
+}
+
+export function createApp(pool: Pool) {
+  return createServer(createHandler(pool));
 }
 
 function inviteCode(req: IncomingMessage): string {
