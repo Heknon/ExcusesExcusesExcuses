@@ -1,4 +1,4 @@
-import type { AppState, Entry, Outcome } from './types.ts';
+import type { Entry, Outcome, Player, Round } from './types.ts';
 
 export const POINTS = {
   done: 3,
@@ -10,11 +10,11 @@ export const POINTS = {
   betHit: 1,
 } as const;
 
-export interface MemberStats {
-  memberId: number;
+export interface PlayerStats {
+  playerId: number;
   points: number;
-  /** Weeks with a recorded outcome. */
-  weeks: number;
+  /** Rounds with a recorded outcome. */
+  rounds: number;
   done: number;
   partial: number;
   failed: number;
@@ -22,11 +22,11 @@ export interface MemberStats {
   calls: number;
   betHits: number;
   bets: number;
-  /** Times others called excuses on this member. */
+  /** Times others called excuses on this player. */
   doubted: number;
-  /** Times others bet on this member. */
+  /** Times others bet on this player. */
   backed: number;
-  /** Consecutive most-recent resolved weeks marked done. */
+  /** Consecutive most-recent resolved rounds marked done. */
   streak: number;
 }
 
@@ -36,7 +36,11 @@ export function ratio(hits: number, total: number): number | null {
   return total ? hits / total : null;
 }
 
-/** Points one entry earned, given everyone's outcomes that week. */
+export function outcomesByPlayer(entries: Entry[]): Map<number, Outcome> {
+  return new Map(entries.map((e) => [e.playerId, e.outcome]));
+}
+
+/** Points one entry earned, given everyone's outcomes that round. */
 export function entryPoints(entry: Entry, outcomes: Map<number, Outcome>): number {
   let points = isResolved(entry.outcome) ? POINTS[entry.outcome] : 0;
   if (entry.excusePickId != null && outcomes.get(entry.excusePickId) === 'failed') points += POINTS.callHit;
@@ -44,29 +48,29 @@ export function entryPoints(entry: Entry, outcomes: Map<number, Outcome>): numbe
   return points;
 }
 
-export function outcomesByMember(entries: Entry[]): Map<number, Outcome> {
-  return new Map(entries.map((e) => [e.memberId, e.outcome]));
-}
-
-export function computeStats(state: AppState): MemberStats[] {
-  const stats = new Map<number, MemberStats>(
-    state.members.map((m) => [
-      m.id,
+/**
+ * Totals per player. Only rounds passed in count, so callers decide whether
+ * in-progress rounds are included (standings use final rounds only).
+ */
+export function computeStats(players: Player[], rounds: Round[], entries: Entry[]): PlayerStats[] {
+  const stats = new Map<number, PlayerStats>(
+    players.map((p) => [
+      p.id,
       {
-        memberId: m.id, points: 0, weeks: 0, done: 0, partial: 0, failed: 0,
+        playerId: p.id, points: 0, rounds: 0, done: 0, partial: 0, failed: 0,
         callHits: 0, calls: 0, betHits: 0, bets: 0, doubted: 0, backed: 0, streak: 0,
       },
     ]),
   );
   const streakBroken = new Set<number>();
-  const newestFirst = [...state.weeks].sort((a, b) => b.startDate.localeCompare(a.startDate) || b.id - a.id);
+  const newestFirst = [...rounds].sort((a, b) => b.startDate.localeCompare(a.startDate) || b.id - a.id);
 
-  for (const week of newestFirst) {
-    const entries = state.entries.filter((e) => e.weekId === week.id);
-    const outcomes = outcomesByMember(entries);
+  for (const round of newestFirst) {
+    const roundEntries = entries.filter((e) => e.roundId === round.id);
+    const outcomes = outcomesByPlayer(roundEntries);
 
-    for (const e of entries) {
-      const s = stats.get(e.memberId);
+    for (const e of roundEntries) {
+      const s = stats.get(e.playerId);
       if (!s) continue;
       if (e.excusePickId != null) {
         const target = stats.get(e.excusePickId);
@@ -78,11 +82,11 @@ export function computeStats(state: AppState): MemberStats[] {
       }
 
       if (isResolved(e.outcome)) {
-        s.weeks++;
+        s.rounds++;
         s[e.outcome]++;
-        if (!streakBroken.has(e.memberId)) {
+        if (!streakBroken.has(e.playerId)) {
           if (e.outcome === 'done') s.streak++;
-          else streakBroken.add(e.memberId);
+          else streakBroken.add(e.playerId);
         }
       }
 
@@ -100,5 +104,5 @@ export function computeStats(state: AppState): MemberStats[] {
     }
   }
 
-  return [...stats.values()].sort((a, b) => b.points - a.points || b.done - a.done);
+  return [...stats.values()].sort((a, b) => b.points - a.points || b.done - a.done || a.playerId - b.playerId);
 }

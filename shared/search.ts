@@ -1,12 +1,12 @@
-import type { AppState, Entry, Week } from './types.ts';
+import type { Entry, Round } from './types.ts';
 
-export type SearchField = 'goal' | 'excuse' | 'notes' | 'excuseReason' | 'betReason' | 'weekTitle' | 'weekNotes';
+export type SearchField = 'goal' | 'excuse' | 'notes' | 'excuseReason' | 'betReason' | 'roundTitle' | 'roundNotes';
 
 export interface SearchHit {
   field: SearchField;
   text: string;
-  week: Week;
-  /** Absent for week-level hits. */
+  round: Round;
+  /** Absent for round-level hits. */
   entry?: Entry;
 }
 
@@ -35,25 +35,27 @@ function entryMatches(text: string, name: string, query: string): boolean {
   return ts.length > 0 && ts.every((t) => hay.includes(t) || who.includes(t)) && ts.some((t) => hay.includes(t));
 }
 
-export function search(state: AppState, query: string, memberNames: Map<number, string>): SearchHit[] {
+export function search(
+  data: { rounds: Round[]; entries: Entry[] },
+  query: string,
+  playerNames: Map<number, string>,
+): SearchHit[] {
   if (!query.trim()) return [];
-  const weeks = new Map(state.weeks.map((w) => [w.id, w]));
+  const rounds = new Map(data.rounds.map((r) => [r.id, r]));
   const hits: SearchHit[] = [];
 
-  for (const week of state.weeks) {
-    if (week.title && matches(week.title, query)) hits.push({ field: 'weekTitle', text: week.title, week });
-    if (week.notes && matches(week.notes, query)) hits.push({ field: 'weekNotes', text: week.notes, week });
+  for (const round of data.rounds) {
+    if (round.title && matches(round.title, query)) hits.push({ field: 'roundTitle', text: round.title, round });
+    if (round.notes && matches(round.notes, query)) hits.push({ field: 'roundNotes', text: round.notes, round });
   }
-  for (const entry of state.entries) {
-    const week = weeks.get(entry.weekId);
-    if (!week) continue;
-    const name = memberNames.get(entry.memberId) ?? '';
+  for (const entry of data.entries) {
+    const round = rounds.get(entry.roundId);
+    if (!round) continue;
+    const name = playerNames.get(entry.playerId) ?? '';
     for (const field of ENTRY_FIELDS) {
       const text = entry[field as keyof Entry] as string;
-      if (text && entryMatches(text, name, query)) {
-        hits.push({ field, text, week, entry });
-      }
+      if (text && entryMatches(text, name, query)) hits.push({ field, text, round, entry });
     }
   }
-  return hits.sort((a, b) => b.week.startDate.localeCompare(a.week.startDate));
+  return hits.sort((a, b) => b.round.startDate.localeCompare(a.round.startDate));
 }

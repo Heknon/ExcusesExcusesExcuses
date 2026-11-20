@@ -18,7 +18,6 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://excuses:excuses@db:5432/excuses
-      TEAM_PASSCODE: ${TEAM_PASSCODE:-}
     ports:
       - "3000:3000"
     depends_on:

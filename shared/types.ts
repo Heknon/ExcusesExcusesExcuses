@@ -1,56 +1,107 @@
 export type Outcome = 'pending' | 'done' | 'partial' | 'failed';
-
 export const OUTCOMES: readonly Outcome[] = ['pending', 'done', 'partial', 'failed'];
 
-export interface Member {
+/**
+ * A round is one week of the game.
+ * - planning: players lock in a goal, an excuse call and a bet. Calls and bets stay secret.
+ * - live: the week is under way. Calls and bets are revealed; players report how it went.
+ * - final: results are locked and scored.
+ */
+export type RoundStatus = 'planning' | 'live' | 'final';
+export const ROUND_STATUSES: readonly RoundStatus[] = ['planning', 'live', 'final'];
+
+export type Role = 'admin' | 'player';
+export type PlayerStatus = 'pending' | 'active' | 'removed';
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+}
+
+export interface Game {
   id: number;
   name: string;
-  active: boolean;
+  /** Only sent to admins. */
+  inviteCode: string | null;
+  createdAt: string;
 }
 
-export interface Week {
+/** A seat in a game. Guests (no account) let an admin track people who haven't signed up yet. */
+export interface Player {
   id: number;
-  title: string;
-  /** First day of the week (Sunday), YYYY-MM-DD. */
-  startDate: string;
-  closed: boolean;
-  /** Free-form notes about the week as a whole. */
-  notes: string;
+  name: string;
+  role: Role;
+  status: PlayerStatus;
+  hasAccount: boolean;
+  isMe: boolean;
+  /** Account email; only sent to admins, only for pending requests. */
+  email?: string;
+  joinedAt: string;
 }
 
-/** One member's row for one week. */
+export interface Round {
+  id: number;
+  startDate: string; // YYYY-MM-DD, a Sunday
+  title: string;
+  notes: string;
+  status: RoundStatus;
+}
+
 export interface Entry {
-  weekId: number;
-  memberId: number;
-  /** What the member commits to this week. */
+  roundId: number;
+  playerId: number;
   goal: string;
   outcome: Outcome;
-  /** The member's explanation when the goal wasn't fully met. */
+  /** The player's explanation when the goal wasn't fully met. */
   excuse: string;
-  /** Free-form notes: what happened, what was learned, follow-ups. */
   notes: string;
-  /** Who this member predicts will come back with excuses. */
+  /** Who this player thinks will come back with excuses. */
   excusePickId: number | null;
   excuseReason: string;
-  /** Who this member bets will deliver. */
+  /** Who this player bets will deliver. */
   betPickId: number | null;
   betReason: string;
+  /** The player has locked in their move for the round. */
+  submitted: boolean;
+  /** Calls and bets are hidden from other players while the round is in planning. */
+  hidden: boolean;
 }
 
-export type EntryPatch = Partial<Omit<Entry, 'weekId' | 'memberId'>>;
-export type WeekPatch = Partial<Pick<Week, 'title' | 'startDate' | 'closed' | 'notes'>>;
-export type MemberPatch = Partial<Pick<Member, 'name' | 'active'>>;
+export type EntryPatch = Partial<
+  Pick<Entry, 'goal' | 'outcome' | 'excuse' | 'notes' | 'excusePickId' | 'excuseReason' | 'betPickId' | 'betReason' | 'submitted'>
+>;
+export type RoundPatch = Partial<Pick<Round, 'title' | 'notes' | 'status' | 'startDate'>>;
 
-export interface AppState {
-  members: Member[];
-  weeks: Week[];
+export interface GameState {
+  game: Game;
+  me: { playerId: number; role: Role };
+  players: Player[];
+  rounds: Round[];
   entries: Entry[];
 }
 
-export function emptyEntry(weekId: number, memberId: number): Entry {
+export interface GameSummary {
+  id: number;
+  name: string;
+  role: Role;
+  status: PlayerStatus;
+  players: { id: number; name: string }[];
+  round: { id: number; status: RoundStatus; startDate: string } | null;
+  /** Something is waiting on this user: a move to lock in, a result to report, or (admins) join requests. */
+  todo: 'submit' | 'report' | 'requests' | null;
+  pendingRequests: number;
+}
+
+export interface Me {
+  user: User;
+  games: GameSummary[];
+}
+
+export function emptyEntry(roundId: number, playerId: number): Entry {
   return {
-    weekId,
-    memberId,
+    roundId,
+    playerId,
     goal: '',
     outcome: 'pending',
     excuse: '',
@@ -59,5 +110,7 @@ export function emptyEntry(weekId: number, memberId: number): Entry {
     excuseReason: '',
     betPickId: null,
     betReason: '',
+    submitted: false,
+    hidden: false,
   };
 }

@@ -1,142 +1,153 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { setPasscode } from './api.ts';
-import { EmptyState } from './components.tsx';
-import { ImportPage } from './pages/ImportPage.tsx';
-import { PeoplePage } from './pages/PeoplePage.tsx';
-import { PersonPage } from './pages/PersonPage.tsx';
-import { SearchPage } from './pages/SearchPage.tsx';
-import { StandingsPage } from './pages/StandingsPage.tsx';
-import { WeekPage } from './pages/WeekPage.tsx';
-import { WeeksPage } from './pages/WeeksPage.tsx';
-import { Link, matchRoute, navigate, useLocation, type Route } from './router.tsx';
-import { StoreContext, useAppStore } from './store.ts';
-
-const NAV: { to: string; label: string; active: (r: Route) => boolean }[] = [
-  { to: '/weeks', label: 'Weeks', active: (r) => r.name === 'weeks' || r.name === 'week' || r.name === 'home' },
-  { to: '/people', label: 'People', active: (r) => r.name === 'people' || r.name === 'person' },
-  { to: '/standings', label: 'Standings', active: (r) => r.name === 'standings' },
-  { to: '/import', label: 'Import', active: (r) => r.name === 'import' },
-];
+import { useEffect, useRef, useState } from 'react';
+import { api } from './api.ts';
+import { AuthPage } from './pages/AuthPage.tsx';
+import { GamePage } from './pages/GamePage.tsx';
+import { HomePage } from './pages/HomePage.tsx';
+import { JoinPage } from './pages/JoinPage.tsx';
+import { currentPath, Link, navigate, useRoute } from './router.tsx';
+import { SessionProvider, useMe, useSession } from './session.tsx';
+import { Avatar, Button, EmptyState, Icon, Modal, Spinner, ToastProvider, useToast } from './ui.tsx';
 
 export function App() {
-  const store = useAppStore();
-  const { path, params } = useLocation();
-  const route = matchRoute(path, params);
-  const latest = store.lookup.weeks[0];
+  return (
+    <ToastProvider>
+      <SessionProvider>
+        <Routes />
+      </SessionProvider>
+    </ToastProvider>
+  );
+}
 
-  // "/" always shows the latest week.
+function Routes() {
+  const route = useRoute();
+  const { state } = useSession();
+  const isAuthRoute = route.name === 'login' || route.name === 'signup';
+
+  // Signed out: everything except the auth screens bounces to sign-in, remembering where to come back to.
   useEffect(() => {
-    if (route.name === 'home' && store.status === 'ready') navigate(latest ? `/weeks/${latest.id}` : '/weeks', { replace: true });
-  }, [route.name, store.status, latest]);
+    if (state.status === 'signedOut' && !isAuthRoute) {
+      const here = currentPath();
+      // Invite links go straight to sign-up: the person is most likely new.
+      const target = route.name === 'join' ? '/signup' : '/login';
+      navigate(here === '/' ? target : `${target}?next=${encodeURIComponent(here)}`, { replace: true });
+    }
+    if (state.status === 'signedIn' && isAuthRoute) navigate(route.next, { replace: true });
+  }, [state.status, isAuthRoute, route]);
 
-  if (store.status === 'locked') return <PasscodeGate onSubmit={store.reload} />;
+  if (state.status === 'loading') return <Spinner />;
+  if (state.status === 'offline') {
+    return (
+      <div className="page page-narrow">
+        <EmptyState icon="x" title="Can’t reach the server" action={<Button onClick={() => location.reload()}>Try again</Button>}>
+          Check your connection.
+        </EmptyState>
+      </div>
+    );
+  }
+  if (isAuthRoute) return state.status === 'signedOut' ? <AuthPage mode={route.name} next={route.next} /> : <Spinner />;
+  if (state.status !== 'signedIn') return <Spinner />;
 
   return (
-    <StoreContext.Provider value={store}>
-      <div className="shell">
-        <header className="topbar">
-          <Link to="/" className="brand">
-            Excuses Excuses Excuses
-          </Link>
-          <nav className="nav" aria-label="Main">
-            {NAV.map((n) => (
-              <Link key={n.to} to={n.to} className="nav-link" aria-current={n.active(route) ? 'page' : undefined}>
-                {n.label}
-              </Link>
-            ))}
-          </nav>
-          <SearchBox initial={route.name === 'search' ? route.query : ''} />
-        </header>
+    <>
+      <TopBar />
+      <main>
+        {route.name === 'home' && <HomePage />}
+        {route.name === 'join' && <JoinPage key={route.code} code={route.code} />}
+        {route.name === 'game' && <GamePage key={route.gameId} route={route} />}
+        {route.name === 'notFound' && (
+          <div className="page page-narrow">
+            <EmptyState icon="x" title="Page not found" action={<Link to="/" className="btn btn-secondary btn-md">Your games</Link>} />
+          </div>
+        )}
+      </main>
+    </>
+  );
+}
 
-        <main className="main">
-          {store.status === 'loading' ? (
-            <p className="muted">Loading…</p>
-          ) : store.status === 'offline' ? (
-            <EmptyState title="Can't reach the server">Check your connection and reload.</EmptyState>
-          ) : (
-            <Page route={route} />
-          )}
-        </main>
+function TopBar() {
+  const me = useMe();
+  const { signOut, refresh } = useSession();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(me.user.name);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const todos = me.games.filter((g) => g.todo).length;
 
-        {store.error && (
-          <div className="toast" role="alert">
-            <span>{store.error}</span>
-            <button className="button-link" onClick={store.dismissError}>
-              Dismiss
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !menuRef.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const saveName = async () => {
+    try {
+      await api.updateProfile({ name });
+      await refresh();
+      toast('Name updated');
+      setEditing(false);
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+
+  return (
+    <header className="topbar">
+      <Link to="/" className="wordmark">
+        Excuses<span>³</span>
+      </Link>
+      <div className="topbar-right" ref={menuRef}>
+        <Link to="/" className="topbar-games">
+          Games
+          {todos > 0 && <span className="badge">{todos}</span>}
+        </Link>
+        <button className="account-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label="Account">
+          <Avatar id={me.user.id} name={me.user.name} size={32} />
+        </button>
+        {open && (
+          <div className="menu menu-account" role="menu">
+            <div className="menu-head">
+              <b dir="auto">{me.user.name}</b>
+              <span className="muted small">{me.user.email}</span>
+            </div>
+            <button
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setName(me.user.name);
+                setEditing(true);
+              }}
+            >
+              <Icon name="edit" size={16} /> Change name
+            </button>
+            <button role="menuitem" onClick={signOut}>
+              <Icon name="logout" size={16} /> Sign out
             </button>
           </div>
         )}
       </div>
-    </StoreContext.Provider>
-  );
-}
-
-function Page({ route }: { route: Route }) {
-  switch (route.name) {
-    case 'home':
-      return null;
-    case 'week':
-      return <WeekPage key={route.id} id={route.id} />;
-    case 'weeks':
-      return <WeeksPage />;
-    case 'people':
-      return <PeoplePage />;
-    case 'person':
-      return <PersonPage key={route.id} id={route.id} />;
-    case 'standings':
-      return <StandingsPage />;
-    case 'search':
-      return <SearchPage query={route.query} />;
-    case 'import':
-      return <ImportPage />;
-    case 'notFound':
-      return <EmptyState title="Page not found" />;
-  }
-}
-
-function SearchBox({ initial }: { initial: string }) {
-  const [q, setQ] = useState(initial);
-  useEffect(() => setQ(initial), [initial]);
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    navigate(q.trim() ? `/search?q=${encodeURIComponent(q.trim())}` : '/search');
-  };
-  return (
-    <form className="search" role="search" onSubmit={submit}>
-      <input
-        className="input"
-        type="search"
-        dir="auto"
-        placeholder="Search goals, excuses, notes"
-        aria-label="Search"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
-    </form>
-  );
-}
-
-function PasscodeGate({ onSubmit }: { onSubmit: () => void }) {
-  const [value, setValue] = useState('');
-  return (
-    <div className="gate">
-      <form
-        className="gate-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setPasscode(value);
-          onSubmit();
-        }}
-      >
-        <h1 className="brand">Excuses Excuses Excuses</h1>
-        <label>
-          Team passcode
-          <input className="input" type="password" value={value} autoFocus onChange={(e) => setValue(e.target.value)} />
-        </label>
-        <button className="button primary" type="submit">
-          Continue
-        </button>
-      </form>
-    </div>
+      {editing && (
+        <Modal
+          title="Your name"
+          onClose={() => setEditing(false)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" disabled={!name.trim()} onClick={saveName}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <label className="field">
+            <span className="field-label">Shown on new games you create or join</span>
+            <input className="input" dir="auto" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus />
+          </label>
+        </Modal>
+      )}
+    </header>
   );
 }
