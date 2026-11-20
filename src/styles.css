@@ -1540,3 +1540,40 @@ span.goal-list { display: grid; }
 
   .trow-main { padding: 10px 12px; row-gap: 4px; }
 }
+
+/* =========================================================
+   Clarity pass: labels over cryptic icons
+   ========================================================= */
+/* Results per goal keep their words on phones: the goal on one line, a compact labelled switch below. */
+@media (max-width: 720px) {
+  .goal-report-row { grid-template-columns: auto minmax(0, 1fr); row-gap: 8px; }
+  .goal-choices { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 3px; }
+  .goal-choice { width: auto; height: 34px; padding: 0 6px; gap: 4px; justify-content: center; font-size: 13px; }
+  .goal-choice-label { display: inline; }
+}
+
+/* Summary dots are round status marks, not checkboxes. */
+.goal-dots .dot { width: 8px; height: 8px; border-radius: 50%; }
+.goal-dots .dot-pending { background: var(--line-2); box-shadow: none; }
+.goal-summary-more { font-weight: 600; white-space: nowrap; }
+
+/* Tally in words. */
+.table-tally { gap: 12px; font-weight: 600; color: var(--ink-2); }
+.tally-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.table-tally .dot { margin: 0; width: 8px; height: 8px; border-radius: 50%; }
+
+/* Compact picker: every player visible as a small chip, wrapping onto new lines. */
+.picker-compact { flex-wrap: wrap; overflow: visible; gap: 6px; padding: 0; }
+.picker-compact .picker-option {
+  flex: 0 0 auto;
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 4px 4px;
+  padding-inline: 4px 14px;
+  border-radius: 999px;
+}
+.picker-compact .picker-option .avatar { width: 30px !important; height: 30px !important; font-size: 12px !important; }
+.picker-compact .picker-name { font-size: 14px; }
+.picker-compact .picker-check { position: static; margin-inline-start: -2px; }

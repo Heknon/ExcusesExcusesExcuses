@@ -825,10 +825,15 @@ function TableSummary({ round, entries }: { round: Round; entries: Entry[] }) {
   if (!entries.some((e) => isResolved(e.outcome))) return null;
   return (
     <span className="table-tally small">
-      <span className="dot dot-done" /> {count('done')}
-      <span className="dot dot-partial" /> {count('partial')}
-      <span className="dot dot-failed" /> {count('failed')}
-      <span className="sr-only">{t.round.summary(count('done'), count('partial'), count('failed'))}</span>
+      <span className="tally-item">
+        <span className="dot dot-done" /> {count('done')} {t.round.delivered}
+      </span>
+      <span className="tally-item">
+        <span className="dot dot-partial" /> {count('partial')} {t.round.partly}
+      </span>
+      <span className="tally-item">
+        <span className="dot dot-failed" /> {count('failed')} {t.round.missed}
+      </span>
     </span>
   );
 }

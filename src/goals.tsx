@@ -129,7 +129,7 @@ export function GoalSummary({ goals, showOutcomes }: { goals: Goal[]; showOutcom
       <span className="goal-summary-text" dir="auto">
         {goals[0].text}
       </span>
-      {goals.length > 1 && <span className="goal-summary-more">+{goals.length - 1}</span>}
+      {goals.length > 1 && <span className="goal-summary-more">{t.round.moreGoals(goals.length - 1)}</span>}
     </span>
   );
 }
