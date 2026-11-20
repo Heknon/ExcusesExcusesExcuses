@@ -113,6 +113,27 @@ export function GoalList({ goals, showOutcomes, limit, inline }: { goals: Goal[]
   );
 }
 
+/** One line for a collapsed row: a dot per goal (colored by result) and the first goal's text. */
+export function GoalSummary({ goals, showOutcomes }: { goals: Goal[]; showOutcomes: boolean }) {
+  const { t } = useI18n();
+  const done = goals.filter((g) => g.outcome === 'done').length;
+  return (
+    <span className="goal-summary">
+      {showOutcomes && (
+        <span className="goal-dots" aria-label={t.round.goalsDone(done, goals.length)} role="img">
+          {goals.map((g) => (
+            <span key={g.id} className={`dot dot-${g.outcome}`} />
+          ))}
+        </span>
+      )}
+      <span className="goal-summary-text" dir="auto">
+        {goals[0].text}
+      </span>
+      {goals.length > 1 && <span className="goal-summary-more">+{goals.length - 1}</span>}
+    </span>
+  );
+}
+
 /* ---------- reporting per goal ---------- */
 
 const SETTABLE: Exclude<Outcome, 'pending'>[] = ['done', 'partial', 'failed'];

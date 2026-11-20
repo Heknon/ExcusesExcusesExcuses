@@ -1474,3 +1474,69 @@ span.goal-list { display: grid; }
   .phases .phase-marker { width: 26px; height: 26px; font-size: 12px; }
   .phase + .phase::before { margin: 0 6px; }
 }
+
+/* =========================================================
+   Calmer round screen
+   ========================================================= */
+.phases-compact { display: none; }
+.phases-bar { display: flex; gap: 4px; }
+.phases-bar span { flex: 1; height: 4px; border-radius: 4px; background: var(--line-2); }
+.phases-bar .is-past { background: var(--ink); }
+.phases-bar .is-current { background: var(--accent); }
+.phases-label { display: block; margin-top: 6px; font-size: 13px; }
+
+.move-report .move-header { align-items: center; }
+.week-result { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 6px; margin: 0; }
+.report-progress { margin: 10px 0 0; }
+.goal-report { margin: 0; gap: 6px; }
+.goal-report-row { padding: 8px 10px; gap: 10px; }
+
+.move-extras { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.move-extras .proof-uploader.is-compact { display: contents; }
+.move-extras .proof-uploader-row { display: contents; }
+.move-extras .my-notes { flex-basis: 100%; margin: 4px 0 0; }
+
+.picker-compact { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x proximity; scrollbar-width: none; }
+.picker-compact::-webkit-scrollbar { display: none; }
+.picker-compact .picker-option { flex: 0 0 72px; width: 72px; padding: 8px 4px 6px; scroll-snap-align: start; }
+.vote-hint { margin-top: 8px; }
+
+.goal-summary { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; color: var(--ink-2); }
+.goal-dots { display: inline-flex; gap: 3px; flex-shrink: 0; }
+.goal-dots .dot { width: 9px; height: 9px; border-radius: 3px; }
+.goal-summary-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.goal-summary-more { flex-shrink: 0; font-size: 12px; font-weight: 700; color: var(--ink-3); }
+.trow-picks:empty { display: none; }
+.notes-toggle { margin-top: 20px; }
+
+@media (max-width: 720px) {
+  .phases { display: none; }
+  .phases-compact { display: block; }
+  .phase-wrap { width: 100%; }
+  .round-header { gap: 12px; margin-bottom: 14px; }
+  .round-title { font-size: 28px; }
+  .round-heading { gap: 4px; }
+  .game-title { font-size: 26px; }
+  .game-header-meta { display: none; }
+  .back-link { margin-bottom: 4px; }
+  .tab-content { padding-top: 14px; }
+  .section { margin-top: 24px; }
+  .section-title { margin-bottom: 10px; }
+
+  .move { padding: 16px; border-radius: 18px; }
+  .move-header { margin-bottom: 12px; }
+  .move-title { font-size: 21px; }
+  .move-vote { margin-top: 12px; }
+
+  /* One line per goal: text, then three icon buttons. */
+  .goal-report-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .goal-report-text { font-size: 15px; }
+  .goal-choices { grid-column: auto; display: inline-flex; gap: 2px; padding: 2px; }
+  .goal-choice { width: 34px; height: 34px; padding: 0; justify-content: center; }
+  .goal-choice-label { display: none; }
+
+  .admin-bar { padding: 10px 12px; gap: 8px 12px; }
+  .admin-actions { flex-wrap: wrap; }
+
+  .trow-main { padding: 10px 12px; row-gap: 4px; }
+}

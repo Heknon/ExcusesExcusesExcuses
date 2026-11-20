@@ -3,7 +3,7 @@ import { betHit, entryPoints, isResolved, mvpVotes, POINTS, roundContext, type R
 import { isPrePlay, type Entry, type Outcome, type Player, type Round, type RoundStatus } from '../../shared/types.ts';
 import { api } from '../api.ts';
 import { addDays, defaultDeadline, fromLocalInput, toLocalInput, weekStart } from '../format.ts';
-import { DeadlineBadge, fromDrafts, GoalList, GoalReporter, GoalsEditor, toDrafts } from '../goals.tsx';
+import { DeadlineBadge, fromDrafts, GoalList, GoalReporter, GoalsEditor, GoalSummary, toDrafts } from '../goals.tsx';
 import { useI18n } from '../i18n.tsx';
 import { ProofStrip, ProofUploader } from '../proofs.tsx';
 import { Link, navigate } from '../router.tsx';
@@ -610,24 +610,26 @@ function ReportResult({ round, entry }: { round: Round; entry: Entry }) {
   };
 
   return (
-    <section className="move">
+    <section className="move move-report">
       <header className="move-header">
         <div>
           <p className="eyebrow">{t.round.goalThisWeek}</p>
           <h3 className="move-title">{t.round.howDidItGo}</h3>
         </div>
+        {isResolved(entry.outcome) && (
+          <span className="week-result" title={t.round.weekResult}>
+            <OutcomePill outcome={entry.outcome} />
+            <span className="week-result-points">{t.common.pointsGain(POINTS[entry.outcome])}</span>
+          </span>
+        )}
       </header>
 
       {entry.goals.length > 0 ? (
         <>
-          <p className="move-step-hint">{t.round.markEach}</p>
           <GoalReporter round={round} entry={entry} />
-          <div className="week-result">
-            <span className="muted small">{t.round.weekResult}</span>
-            <OutcomePill outcome={entry.outcome} />
-            {entry.goals.length > 1 && <span className="muted small">{t.round.goalsDone(doneCount, entry.goals.length)}</span>}
-            {isResolved(entry.outcome) && <span className="week-result-points">{t.common.pointsGain(POINTS[entry.outcome])}</span>}
-          </div>
+          {entry.goals.length > 1 && !isResolved(entry.outcome) && (
+            <p className="muted small report-progress">{t.round.goalsDone(doneCount, entry.goals.length)}</p>
+          )}
         </>
       ) : (
         <div className="outcome-tiles" role="radiogroup" aria-label={t.round.yourResult}>
@@ -658,8 +660,10 @@ function ReportResult({ round, entry }: { round: Round; entry: Entry }) {
           />
         </div>
       )}
-      <ProofUploader entry={entry} />
-      <MyNotes round={round} entry={entry} />
+      <div className="move-extras">
+        <ProofUploader entry={entry} compact />
+        <MyNotes round={round} entry={entry} />
+      </div>
     </section>
   );
 }
@@ -688,8 +692,8 @@ function VoteCard({ round, entry, entries }: { round: Round; entry: Entry; entri
           <h3 className="move-title">{t.round.voteTitle}</h3>
         </div>
       </header>
-      <p className="move-step-hint move-lede">{t.round.voteHint(POINTS.mvp, POINTS.betHit)}</p>
-      <PlayerPicker tone="vote" label={t.round.voteTitle} players={candidates} value={entry.mvpVoteId} onChange={vote} />
+      <PlayerPicker tone="vote" compact label={t.round.voteTitle} players={candidates} value={entry.mvpVoteId} onChange={vote} />
+      <p className="muted small vote-hint">{t.round.voteHint(POINTS.mvp, POINTS.betHit)}</p>
     </section>
   );
 }
@@ -739,8 +743,10 @@ function FinalScore({ entry, ctx }: { entry: Entry; ctx: RoundContext }) {
           </li>
         )}
       </ul>
-      <ProofUploader entry={entry} />
-      <MyNotes round={round} entry={entry} />
+      <div className="move-extras">
+        <ProofUploader entry={entry} compact />
+        <MyNotes round={round} entry={entry} />
+      </div>
     </section>
   );
 }
@@ -753,9 +759,9 @@ function MyNotes({ round, entry }: { round: Round; entry: Entry }) {
   useEffect(() => setNotes(entry.notes), [entry.notes]);
   if (!open) {
     return (
-      <button className="link-btn my-notes-toggle" onClick={() => setOpen(true)}>
-        <Icon name="plus" size={14} /> {t.round.addNote}
-      </button>
+      <Button size="sm" variant="ghost" icon="edit" onClick={() => setOpen(true)}>
+        {t.round.addNote}
+      </Button>
     );
   }
   return (
@@ -905,28 +911,27 @@ function TableRow(props: {
               </span>
             )}
           </span>
-          {e.goals.length ? (
-            <GoalList goals={e.goals} showOutcomes={started} limit={open ? undefined : 3} inline />
-          ) : (
+          {!e.goals.length ? (
             <span className="trow-goal is-empty">{t.round.noGoalYet}</span>
+          ) : started && !open ? (
+            <GoalSummary goals={e.goals} showOutcomes />
+          ) : (
+            // Before the week, the goals are what everyone bets on, so they stay readable.
+            <GoalList goals={e.goals} showOutcomes={started} limit={open ? undefined : 2} inline />
           )}
-          {e.excuse && started && (
+          {e.excuse && open && (
             <span className="trow-excuse" dir="auto">
               {e.excuse}
             </span>
           )}
         </span>
         <span className="trow-picks">
-          {e.hidden && round.status === 'bets' ? (
-            <span className="trow-hidden">
-              <Icon name="eyeOff" size={14} /> {t.round.picksHidden}
-            </span>
-          ) : hasPicks ? (
+          {hasPicks && (open || !started || round.status === 'final') && (
             <>
               <MiniPick kind="call" label={t.round.callShort} id={e.excusePickId} verdict={callVerdict} />
               <MiniPick kind="bet" label={t.round.betShort} id={e.betPickId} verdict={betVerdict} />
             </>
-          ) : null}
+          )}
         </span>
         <span className="trow-end">
           <RowStatus round={round} entry={e} points={props.points} leader={props.leader} />
@@ -1159,7 +1164,20 @@ function RoundNotes({ round }: { round: Round }) {
   const { gameId, run } = useGame();
   const { t } = useI18n();
   const [notes, setNotes] = useState(round.notes);
+  const [open, setOpen] = useState(!!round.notes);
   useEffect(() => setNotes(round.notes), [round.notes]);
+  useEffect(() => {
+    if (round.notes) setOpen(true);
+  }, [round.notes]);
+  if (!open) {
+    return (
+      <div className="section notes-toggle">
+        <Button size="sm" variant="ghost" icon="plus" onClick={() => setOpen(true)}>
+          {t.round.notes}
+        </Button>
+      </div>
+    );
+  }
   return (
     <section className="section">
       <h3 className="section-title">{t.round.notes}</h3>
@@ -1170,6 +1188,7 @@ function RoundNotes({ round }: { round: Round }) {
         onBlur={() => notes.trim() !== round.notes && run(() => api.updateRound(gameId, round.id, { notes }), t.round.notesSaved)}
         placeholder={t.round.notesPlaceholder}
         maxLength={8000}
+        autoFocus={!round.notes}
       />
     </section>
   );

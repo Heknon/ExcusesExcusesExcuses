@@ -165,6 +165,21 @@ export function PhaseSteps({ status }: { status: RoundStatus }) {
   const { t } = useI18n();
   const current = PHASES.indexOf(status);
   return (
+    <div className="phase-wrap">
+      {/* Phones: a slim progress bar with the current step's name. */}
+      <div className="phases-compact">
+        <span className="phases-bar" aria-hidden>
+          {PHASES.map((p, i) => (
+            <span key={p} className={i < current ? 'is-past' : i === current ? 'is-current' : ''} />
+          ))}
+        </span>
+        <span className="phases-label">
+          <b>
+            {current + 1}/{PHASES.length} · {t.phase[status]}
+          </b>
+          <span className="muted"> · {t.phaseHint[status]}</span>
+        </span>
+      </div>
     <ol className="phases">
       {PHASES.map((p, i) => (
         <li key={p} className={`phase ${i < current ? 'is-past' : ''} ${i === current ? 'is-current' : ''}`} aria-current={i === current ? 'step' : undefined}>
@@ -176,6 +191,7 @@ export function PhaseSteps({ status }: { status: RoundStatus }) {
         </li>
       ))}
     </ol>
+    </div>
   );
 }
 
@@ -214,9 +230,11 @@ export function PlayerPicker(props: {
   onChange: (id: number | null) => void;
   label: string;
   tone: 'call' | 'bet' | 'vote';
+  /** One scrollable row of faces instead of a grid of tiles. */
+  compact?: boolean;
 }) {
   return (
-    <div className={`picker picker-${props.tone}`} role="radiogroup" aria-label={props.label}>
+    <div className={`picker picker-${props.tone} ${props.compact ? 'picker-compact' : ''}`} role="radiogroup" aria-label={props.label}>
       {props.players.map((p) => {
         const on = props.value === p.id;
         return (
@@ -228,7 +246,7 @@ export function PlayerPicker(props: {
             className="picker-option"
             onClick={() => props.onChange(on ? null : p.id)}
           >
-            <Avatar id={p.id} name={p.name} size={40} />
+            <Avatar id={p.id} name={p.name} size={props.compact ? 36 : 40} />
             <span className="picker-name" dir="auto">
               {p.name}
             </span>
