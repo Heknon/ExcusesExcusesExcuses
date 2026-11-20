@@ -2,11 +2,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import type { User } from '../shared/types.ts';
-import { authService, SESSION_COOKIE, SESSION_DAYS } from './auth.ts';
-import { HttpError, openPool, type Pool } from './db.ts';
-import { gameService, PROOF_MAX_BYTES } from './games.ts';
+import { AUTH_BASE_PATH, authService } from './auth.ts';
+import { HttpError, migrate, openPool, type Pool } from './db.ts';
+import { gameService } from './games.ts';
+import { DOWNLOAD_URL_SECONDS, photoStoreFromEnv, type PhotoStore } from './storage.ts';
 
-const PROOF_UPLOAD = /^\/api\/games\/(\d+)\/rounds\/(\d+)\/entries\/(\d+)\/proofs$/;
 const PROOF_GET = /^\/api\/proofs\/(\d+)$/;
 
 const STATIC_DIR = resolve('dist');
@@ -50,23 +50,6 @@ async function readJson(req: IncomingMessage): Promise<any> {
   }
 }
 
-function cookies(req: IncomingMessage): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const part of (req.headers.cookie ?? '').split(';')) {
-    const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
-  }
-  return out;
-}
-
-function sessionCookie(req: IncomingMessage, token: string | null): string {
-  const secure = req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
-  const attrs = ['Path=/', 'HttpOnly', 'SameSite=Lax', ...(secure ? ['Secure'] : [])];
-  return token
-    ? `${SESSION_COOKIE}=${token}; Max-Age=${SESSION_DAYS * 86400}; ${attrs.join('; ')}`
-    : `${SESSION_COOKIE}=; Max-Age=0; ${attrs.join('; ')}`;
-}
-
 interface Ctx {
   req: IncomingMessage;
   user: User | null;
@@ -75,12 +58,12 @@ interface Ctx {
   query: URLSearchParams;
 }
 type Handler = (ctx: Ctx & { user: User }) => Promise<unknown>;
-type PublicHandler = (ctx: Ctx) => Promise<{ body: unknown; cookie?: string | null } | unknown>;
+type PublicHandler = (ctx: Ctx) => Promise<unknown>;
 
 /** The whole app as a plain Node request handler: used by the local server and by the Vercel function. */
-export function createHandler(pool: Pool) {
+export function createHandler(pool: Pool, photos: PhotoStore | null) {
   const auth = authService(pool);
-  const games = gameService(pool);
+  const games = gameService(pool, photos);
 
   // Routes that need a signed-in user. `:id`-style segments are matched as integers.
   const routes: [string, RegExp, Handler][] = [
@@ -105,6 +88,16 @@ export function createHandler(pool: Pool) {
       /^\/api\/games\/(\d+)\/rounds\/(\d+)\/entries\/(\d+)$/,
       async ({ user, params: [g, r, p], body }) => games.updateEntry(user.id, g, r, p, body),
     ],
+    [
+      'POST',
+      /^\/api\/games\/(\d+)\/rounds\/(\d+)\/entries\/(\d+)\/proofs\/uploads$/,
+      async ({ user, params: [g, r, p], body }) => games.startProofUpload(user, g, r, p, body),
+    ],
+    [
+      'POST',
+      /^\/api\/games\/(\d+)\/rounds\/(\d+)\/entries\/(\d+)\/proofs$/,
+      async ({ user, params: [g, r, p], body }) => games.finishProofUpload(user, g, r, p, body),
+    ],
     ['DELETE', /^\/api\/proofs\/(\d+)$/, async ({ user, params: [id] }) => games.deleteProof(user.id, id)],
     [
       'DELETE',
@@ -115,19 +108,6 @@ export function createHandler(pool: Pool) {
 
   const publicRoutes: [string, RegExp, PublicHandler][] = [
     ['GET', /^\/api\/health$/, async () => ({ ok: await pool.query('SELECT 1').then(() => true, () => false) })],
-    ['POST', /^\/api\/auth\/signup$/, async ({ body }) => {
-      const { user, token } = await auth.signup(body);
-      return { body: { user }, cookie: token };
-    }],
-    ['POST', /^\/api\/auth\/login$/, async ({ body }) => {
-      const { user, token } = await auth.login(body);
-      return { body: { user }, cookie: token };
-    }],
-    ['POST', /^\/api\/auth\/logout$/, async ({ req }) => {
-      const token = cookies(req)[SESSION_COOKIE];
-      if (token) await auth.logout(token);
-      return { body: { ok: true }, cookie: null };
-    }],
   ];
 
   return async (req: IncomingMessage, res: ServerResponse) => {
@@ -136,24 +116,19 @@ export function createHandler(pool: Pool) {
 
     try {
       const method = req.method ?? 'GET';
-      const user = await auth.userForToken(cookies(req)[SESSION_COOKIE]);
-
-      // Binary routes: proof photos.
-      const upload = url.pathname.match(PROOF_UPLOAD);
-      if (upload && method === 'POST') {
-        // Only image types are accepted: like JSON, browsers can't send them cross-site without a preflight.
-        if (!String(req.headers['content-type'] ?? '').startsWith('image/')) throw new HttpError(415, 'proof_not_image');
-        if (!user) throw new HttpError(401, 'sign_in');
-        const bytes = await readBody(req, PROOF_MAX_BYTES).catch((err) => {
-          throw err instanceof HttpError && err.code === 'request_too_large' ? new HttpError(413, 'proof_too_large') : err;
-        });
-        const [g, r, p] = upload.slice(1).map(Number);
-        return send(res, 200, await games.addProof(user, g, r, p, bytes));
+      if (url.pathname === AUTH_BASE_PATH || url.pathname.startsWith(`${AUTH_BASE_PATH}/`)) {
+        return await auth.handle(req, res, await readBody(req, 100_000));
       }
+      const user = await auth.userFor(req);
+
       const download = url.pathname.match(PROOF_GET);
       if (download && method === 'GET') {
         if (!user) throw new HttpError(401, 'sign_in');
         const proof = await games.proof(user.id, Number(download[1]));
+        if ('url' in proof) {
+          res.writeHead(302, { location: proof.url, 'cache-control': `private, max-age=${DOWNLOAD_URL_SECONDS - 300}` });
+          return res.end();
+        }
         res.writeHead(200, {
           'content-type': proof.mime,
           'content-length': proof.bytes.length,
@@ -176,11 +151,7 @@ export function createHandler(pool: Pool) {
       for (const [m, re, handler] of publicRoutes) {
         const match = url.pathname.match(re);
         if (!match || m !== method) continue;
-        const out: any = await handler({ ...base, params: match.slice(1).map(Number) });
-        if (out && 'cookie' in out) {
-          return send(res, 200, out.body, { 'set-cookie': sessionCookie(req, out.cookie) });
-        }
-        return send(res, 200, out);
+        return send(res, 200, await handler({ ...base, params: match.slice(1).map(Number) }));
       }
       for (const [m, re, handler] of routes) {
         const match = url.pathname.match(re);
@@ -197,8 +168,8 @@ export function createHandler(pool: Pool) {
   };
 }
 
-export function createApp(pool: Pool) {
-  return createServer(createHandler(pool));
+export function createApp(pool: Pool, photos: PhotoStore | null) {
+  return createServer(createHandler(pool, photos));
 }
 
 function inviteCode(req: IncomingMessage): string {
@@ -224,14 +195,15 @@ async function serveStatic(pathname: string, res: ServerResponse) {
     });
     res.end(data);
   } catch {
-    res.writeHead(404).end('Not built yet: run `npm run build`, or use `npm run dev`.');
+    res.writeHead(404).end('Not built yet: run `bun run build`, or use `bun run dev`.');
   }
 }
 
 if (import.meta.main ?? process.argv[1]?.endsWith('index.ts')) {
-  const PORT = Number(process.env.PORT ?? 3000);
-  const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://localhost:5432/excuses';
-  const pool = await openPool(DATABASE_URL);
+  const PORT = Number(process.env.PORT || 3000);
+  const DATABASE_URL = process.env.DATABASE_URL || 'postgres://localhost:5432/excuses';
+  await migrate(process.env.DATABASE_URL_UNPOOLED || DATABASE_URL);
+  const pool = openPool(DATABASE_URL);
   const { host, pathname } = new URL(DATABASE_URL);
-  createApp(pool).listen(PORT, () => console.log(`Excuses Excuses Excuses → http://localhost:${PORT}  (db: ${host}${pathname})`));
+  createApp(pool, photoStoreFromEnv()).listen(PORT, () => console.log(`Excuses Excuses Excuses → http://localhost:${PORT}  (db: ${host}${pathname})`));
 }

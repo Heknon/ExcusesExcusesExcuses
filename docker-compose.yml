@@ -1,4 +1,6 @@
-# Local / self-hosted: app + Postgres.  `docker compose up --build` → http://localhost:3000
+# Local services: Postgres, and SeaweedFS as S3-compatible photo storage.
+#   docker compose up -d db s3 s3-bucket   then   bun run dev
+#   docker compose up --build              app as well, on http://localhost:3000
 services:
   db:
     image: postgres:16-alpine
@@ -14,14 +16,51 @@ services:
       test: ["CMD-SHELL", "pg_isready -U excuses"]
       interval: 2s
       retries: 20
+
+  s3:
+    image: chrislusf/seaweedfs:4.52
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - s3data:/data
+      - ./docker/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+    ports:
+      - "8333:8333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9333/cluster/status"]
+      interval: 2s
+      retries: 30
+
+  s3-bucket:
+    image: chrislusf/seaweedfs:4.52
+    depends_on:
+      s3:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c", "echo 's3.bucket.create -name excuses' | weed shell -master=s3:9333"]
+
   app:
     build: .
     environment:
       DATABASE_URL: postgres://excuses:excuses@db:5432/excuses
+      S3_BUCKET: excuses
+      S3_REGION: us-east-1
+      S3_PREFIX: local/
+      # The browser uploads to the same address, so it must resolve from both sides.
+      S3_ENDPOINT: http://host.docker.internal:8333
+      S3_ACCESS_KEY_ID: excuses
+      S3_SECRET_ACCESS_KEY: excuses-local
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID:-}
+      AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "3000:3000"
     depends_on:
       db:
         condition: service_healthy
+      s3-bucket:
+        condition: service_completed_successfully
+
 volumes:
   pgdata:
+  s3data:

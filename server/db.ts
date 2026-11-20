@@ -1,7 +1,14 @@
 import pg from 'pg';
 import { ERRORS, type ErrorCode } from '../shared/errors.ts';
 
-const SCHEMA = `
+/**
+ * Schema changes, applied in order and recorded in schema_migrations. Each runs before the code that
+ * needs it goes live, so it must keep the previous version working. Never edit one that has shipped.
+ */
+export const MIGRATIONS: { id: string; sql: string }[] = [
+  {
+    id: '001_initial',
+    sql: `
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -108,7 +115,23 @@ const SCHEMA = `
 
   -- Each player's secret vote for the most impressive week.
   ALTER TABLE round_entries ADD COLUMN IF NOT EXISTS mvp_vote_id INTEGER REFERENCES players(id) ON DELETE SET NULL;
-`;
+`,
+  },
+  {
+    // Accounts sign in with Google; existing accounts are matched by email and keep their history.
+    id: '002_google_sign_in',
+    sql: `ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;`,
+  },
+  {
+    // Proof photos move to object storage. Rows keep their bytes until scripts/move-proofs-to-s3.ts runs.
+    id: '003_proofs_in_s3',
+    sql: `
+      ALTER TABLE proofs ADD COLUMN object_key TEXT UNIQUE;
+      ALTER TABLE proofs ALTER COLUMN bytes DROP NOT NULL;
+      ALTER TABLE proofs ADD CONSTRAINT proofs_stored CHECK (bytes IS NOT NULL OR object_key IS NOT NULL);
+    `,
+  },
+];
 
 // DATE columns as plain 'YYYY-MM-DD' strings, never JS Dates (no timezone shifts).
 pg.types.setTypeParser(pg.types.builtins.DATE, (v) => v);
@@ -117,11 +140,42 @@ export type Pool = pg.Pool;
 export type Client = pg.PoolClient;
 export type Queryable = Pick<pg.Pool | pg.PoolClient, 'query'>;
 
-export async function openPool(connectionString: string): Promise<pg.Pool> {
+export function openPool(connectionString: string): pg.Pool {
   const pool = new pg.Pool({ connectionString, max: 10 });
   pool.on('error', (err) => console.error('postgres pool error', err));
-  await pool.query(SCHEMA);
   return pool;
+}
+
+const MIGRATION_LOCK = 4_242_001;
+
+/** Apply pending migrations. Safe to run on every deploy, and concurrently: an advisory lock serialises runs. */
+export async function migrate(connectionString: string): Promise<string[]> {
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK]);
+    await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
+    const { rows } = await client.query<{ id: string }>('SELECT id FROM schema_migrations');
+    const done = new Set(rows.map((r) => r.id));
+    const applied: string[] = [];
+    for (const m of MIGRATIONS) {
+      if (done.has(m.id)) continue;
+      await client.query('BEGIN');
+      try {
+        await client.query(m.sql);
+        await client.query('INSERT INTO schema_migrations (id) VALUES ($1)', [m.id]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      }
+      applied.push(m.id);
+    }
+    return applied;
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK]).catch(() => {});
+    await client.end();
+  }
 }
 
 export async function transaction<T>(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {

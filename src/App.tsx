@@ -38,15 +38,13 @@ function Routes() {
   const route = useRoute();
   const { state } = useSession();
   const { t } = useI18n();
-  const isAuthRoute = route.name === 'login' || route.name === 'signup';
+  const isAuthRoute = route.name === 'login';
 
-  // Signed out: everything except the auth screens bounces to sign-in, remembering where to come back to.
+  // Signed out: everything except the sign-in screen bounces to it, remembering where to come back to.
   useEffect(() => {
     if (state.status === 'signedOut' && !isAuthRoute) {
       const here = currentPath();
-      // Invite links go straight to sign-up: the person is most likely new.
-      const target = route.name === 'join' ? '/signup' : '/login';
-      navigate(here === '/' ? target : `${target}?next=${encodeURIComponent(here)}`, { replace: true });
+      navigate(here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`, { replace: true });
     }
     if (state.status === 'signedIn' && isAuthRoute) navigate(route.next, { replace: true });
   }, [state.status, isAuthRoute, route]);
@@ -61,7 +59,7 @@ function Routes() {
       </div>
     );
   }
-  if (isAuthRoute) return state.status === 'signedOut' ? <AuthPage mode={route.name} next={route.next} /> : <Spinner />;
+  if (isAuthRoute) return state.status === 'signedOut' ? <AuthPage next={route.next} /> : <Spinner />;
   if (state.status !== 'signedIn') return <Spinner />;
 
   return (

@@ -28,7 +28,6 @@ export type GameTab = 'round' | 'history' | 'standings' | 'players' | 'settings'
 export type Route =
   | { name: 'home' }
   | { name: 'login'; next: string }
-  | { name: 'signup'; next: string }
   | { name: 'join'; code: string }
   | { name: 'game'; gameId: number; tab: GameTab; roundId?: number; playerId?: number; query?: string }
   | { name: 'notFound' };
@@ -37,8 +36,7 @@ export function matchRoute(path: string, params: URLSearchParams): Route {
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
   const next = params.get('next') ?? '/';
   if (parts.length === 0) return { name: 'home' };
-  if (parts[0] === 'login') return { name: 'login', next };
-  if (parts[0] === 'signup') return { name: 'signup', next };
+  if (parts[0] === 'login' || parts[0] === 'signup') return { name: 'login', next };
   if (parts[0] === 'join' && parts[1]) return { name: 'join', code: parts[1] };
   if (parts[0] === 'g' && /^\d+$/.test(parts[1] ?? '')) {
     const gameId = Number(parts[1]);
