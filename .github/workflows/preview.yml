@@ -1,9 +1,16 @@
+# Managed by project-kit (kit sync). docs: https://github.com/Heknon/project-kit/blob/main/docs/contract.md
 name: Preview
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed, labeled]
     paths-ignore: ["**/*.md", "docs/**"]
+
 jobs:
   preview:
-    uses: Heknon/project-kit/.github/workflows/preview.yml@main
+    # A called workflow can't have more than its caller, and a repository's default is read-only.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: Heknon/project-kit/.github/workflows/preview.yml@bc78b9afa59f47dac9d5ca58914e1c22a25ef653 # bc78b9a
     secrets: inherit
