@@ -1,23 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { isResolved } from '../../shared/scoring.ts';
-import { search, type SearchField } from '../../shared/search.ts';
-import { OUTCOME_LABEL, PHASE_LABEL, weekRange } from '../format.ts';
+import { search } from '../../shared/search.ts';
+import { useI18n } from '../i18n.tsx';
 import { Link, navigate } from '../router.tsx';
 import { useGame } from '../session.tsx';
 import { Avatar, EmptyState, Icon, OutcomeDot, OutcomePill, Pill } from '../ui.tsx';
 
-const FIELD_LABEL: Record<SearchField, string> = {
-  goal: 'Goal',
-  excuse: 'Excuse',
-  notes: 'Notes',
-  excuseReason: 'Why they’d have excuses',
-  betReason: 'Why they’d deliver',
-  roundTitle: 'Round title',
-  roundNotes: 'Round notes',
-};
-
 export function HistoryPage({ query }: { query: string }) {
   const { gameId } = useGame();
+  const { t } = useI18n();
   const [q, setQ] = useState(query);
   useEffect(() => setQ(query), [query]);
 
@@ -36,8 +27,8 @@ export function HistoryPage({ query }: { query: string }) {
           dir="auto"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search every goal, excuse and note"
-          aria-label="Search history"
+          placeholder={t.history.search}
+          aria-label={t.history.searchLabel}
         />
       </form>
 
@@ -48,7 +39,14 @@ export function HistoryPage({ query }: { query: string }) {
 
 function RoundList() {
   const { lookup, gameId } = useGame();
-  if (!lookup.rounds.length) return <EmptyState icon="history" title="No rounds yet">Every round lands here, with goals, results, excuses and notes.</EmptyState>;
+  const { t, fmt } = useI18n();
+  if (!lookup.rounds.length) {
+    return (
+      <EmptyState icon="history" title={t.history.emptyTitle}>
+        {t.history.emptyBody}
+      </EmptyState>
+    );
+  }
 
   return (
     <ol className="round-list">
@@ -62,8 +60,8 @@ function RoundList() {
               <span className="round-row-num">{lookup.rounds.length - i}</span>
               <span className="round-row-main">
                 <span className="round-row-title">
-                  {weekRange(r.startDate)}
-                  {r.status !== 'final' && <Pill tone={r.status}>{PHASE_LABEL[r.status]}</Pill>}
+                  {fmt.weekRange(r.startDate)}
+                  {r.status !== 'final' && <Pill tone={r.status}>{t.phase[r.status]}</Pill>}
                 </span>
                 {(r.title || r.notes) && (
                   <span className="round-row-notes" dir="auto">
@@ -74,10 +72,10 @@ function RoundList() {
               <span className="round-row-side">
                 <span className="dots">
                   {entries.map((e) => (
-                    <OutcomeDot key={e.playerId} outcome={r.status === 'planning' ? undefined : e.outcome} title={`${lookup.name(e.playerId)}: ${OUTCOME_LABEL[e.outcome]}`} />
+                    <OutcomeDot key={e.playerId} outcome={r.status === 'planning' ? undefined : e.outcome} title={`${lookup.name(e.playerId)}: ${t.outcome[e.outcome]}`} />
                   ))}
                 </span>
-                <span className="muted small">{resolved ? `${done}/${entries.length} delivered` : `${entries.length} players`}</span>
+                <span className="muted small">{resolved ? t.history.deliveredOf(done, entries.length) : t.common.players(entries.length)}</span>
               </span>
               <Icon name="chevronRight" className="round-row-chevron" />
             </Link>
@@ -90,16 +88,21 @@ function RoundList() {
 
 function SearchResults({ query }: { query: string }) {
   const { state, lookup, gameId } = useGame();
+  const { t, fmt } = useI18n();
   const names = useMemo(() => new Map(state.players.map((p) => [p.id, p.name])), [state.players]);
   const hits = useMemo(() => search(state, query, names), [state, query, names]);
 
-  if (!hits.length) return <EmptyState icon="search" title="Nothing found">Try fewer words. Add a player’s name to narrow it down.</EmptyState>;
+  if (!hits.length) {
+    return (
+      <EmptyState icon="search" title={t.history.nothingTitle}>
+        {t.history.nothingBody}
+      </EmptyState>
+    );
+  }
 
   return (
     <>
-      <p className="muted small results-count">
-        {hits.length} result{hits.length === 1 ? '' : 's'}
-      </p>
+      <p className="muted small results-count">{t.history.results(hits.length)}</p>
       <ol className="search-results">
         {hits.map((h, i) => (
           <li key={i} className="search-hit">
@@ -110,9 +113,9 @@ function SearchResults({ query }: { query: string }) {
                   <span dir="auto">{lookup.name(h.entry.playerId)}</span>
                 </Link>
               )}
-              <span className="muted">{FIELD_LABEL[h.field]}</span>
+              <span className="muted">{t.history.field[h.field]}</span>
               <Link to={h.round === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${h.round.id}`} className="muted">
-                {weekRange(h.round.startDate)}
+                {fmt.weekRange(h.round.startDate)}
               </Link>
               {h.entry && h.field === 'goal' && h.round.status !== 'planning' && <OutcomePill outcome={h.entry.outcome} />}
             </div>

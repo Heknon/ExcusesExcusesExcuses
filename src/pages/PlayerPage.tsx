@@ -1,20 +1,22 @@
 import { useMemo, type ReactNode } from 'react';
 import { computeStats, entryPoints, isResolved, outcomesByPlayer, ratio } from '../../shared/scoring.ts';
 import type { Entry, Round } from '../../shared/types.ts';
-import { OUTCOME_LABEL, percent, plural, shortDate, weekRange } from '../format.ts';
+import { useI18n } from '../i18n.tsx';
+import { ProofStrip } from '../proofs.tsx';
 import { Link } from '../router.tsx';
 import { useGame } from '../session.tsx';
 import { Avatar, EmptyState, Icon, OutcomeDot, OutcomePill, Pill } from '../ui.tsx';
 
 export function PlayerPage({ playerId }: { playerId: number }) {
   const { state, lookup, gameId } = useGame();
+  const { t, fmt } = useI18n();
   const player = lookup.player.get(playerId);
   const finals = useMemo(() => lookup.rounds.filter((r) => r.status === 'final'), [lookup.rounds]);
   const stats = useMemo(
     () => computeStats(state.players, finals, state.entries).find((s) => s.playerId === playerId),
     [state, finals, playerId],
   );
-  if (!player || !stats) return <EmptyState icon="x" title="Player not found" />;
+  if (!player || !stats) return <EmptyState icon="x" title={t.profile.notFound} />;
 
   const history = (lookup.entriesByPlayer.get(playerId) ?? [])
     .map((entry) => ({ entry, round: lookup.round.get(entry.roundId)! }))
@@ -24,7 +26,7 @@ export function PlayerPage({ playerId }: { playerId: number }) {
   return (
     <div className="profile">
       <Link to={`/g/${gameId}/players`} className="back-link">
-        <Icon name="chevronLeft" size={16} /> Players
+        <Icon name="chevronLeft" size={16} /> {t.profile.back}
       </Link>
       <header className="profile-header">
         <Avatar id={player.id} name={player.name} size={72} />
@@ -33,41 +35,41 @@ export function PlayerPage({ playerId }: { playerId: number }) {
             {player.name}
           </h2>
           <div className="roster-tags">
-            {player.isMe && <span className="you-tag">You</span>}
-            {player.role === 'admin' && <Pill icon="crown">Admin</Pill>}
-            {!player.hasAccount && <Pill>Guest</Pill>}
-            {player.status === 'removed' && <Pill>Former player</Pill>}
+            {player.isMe && <span className="you-tag">{t.common.you}</span>}
+            {player.role === 'admin' && <Pill icon="crown">{t.common.admin}</Pill>}
+            {!player.hasAccount && <Pill>{t.common.guest}</Pill>}
+            {player.status === 'removed' && <Pill>{t.profile.former}</Pill>}
           </div>
         </div>
         <div className="profile-points">
           <b>{stats.points}</b>
-          <span>points</span>
+          <span>{t.profile.points}</span>
         </div>
       </header>
 
       <section className="stat-tiles">
-        <Tile value={percent(ratio(stats.done, stats.rounds))} label="Delivered" sub={`${stats.done} of ${plural(stats.rounds, 'round')}`} />
-        <Tile value={stats.partial} label="Partly" sub={`${stats.failed} missed`} />
-        <Tile value={percent(ratio(stats.callHits, stats.calls))} label="Excuse calls right" sub={`${stats.callHits} of ${stats.calls}`} />
-        <Tile value={percent(ratio(stats.betHits, stats.bets))} label="Bets right" sub={`${stats.betHits} of ${stats.bets}`} />
-        <Tile value={stats.doubted} label="Times doubted" sub={`backed ${plural(stats.backed, 'time')}`} />
-        <Tile value={stats.streak || '—'} label="Current streak" sub="rounds in a row" />
+        <Tile value={fmt.percent(ratio(stats.done, stats.rounds))} label={t.profile.delivered} sub={t.profile.deliveredSub(stats.done, stats.rounds)} />
+        <Tile value={stats.partial} label={t.profile.partly} sub={t.profile.missedSub(stats.failed)} />
+        <Tile value={fmt.percent(ratio(stats.callHits, stats.calls))} label={t.profile.callsRight} sub={t.profile.ofSub(stats.callHits, stats.calls)} />
+        <Tile value={fmt.percent(ratio(stats.betHits, stats.bets))} label={t.profile.betsRight} sub={t.profile.ofSub(stats.betHits, stats.bets)} />
+        <Tile value={stats.doubted} label={t.profile.doubted} sub={t.profile.backedSub(stats.backed)} />
+        <Tile value={stats.streak || '—'} label={t.profile.streak} sub={t.profile.streakSub} />
       </section>
 
       {history.length > 0 && (
-        <div className="form-strip" aria-label="Results, oldest to newest">
+        <div className="form-strip" aria-label={t.profile.historyLabel}>
           {[...history].reverse().map(({ entry, round }) => (
             <Link key={round.id} to={round === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${round.id}`}>
-              <OutcomeDot outcome={round.status === 'planning' ? undefined : entry.outcome} title={`${shortDate(round.startDate)}: ${OUTCOME_LABEL[entry.outcome]}`} />
+              <OutcomeDot outcome={round.status === 'planning' ? undefined : entry.outcome} title={`${fmt.shortDate(round.startDate)}: ${t.outcome[entry.outcome]}`} />
             </Link>
           ))}
         </div>
       )}
 
       <section className="section">
-        <h3 className="section-title">Every round</h3>
+        <h3 className="section-title">{t.profile.every}</h3>
         {history.length === 0 ? (
-          <EmptyState title={`${player.name} hasn’t played a round yet.`} />
+          <EmptyState title={t.profile.noRounds(player.name)} />
         ) : (
           <ol className="timeline">
             {history.map(({ entry, round }) => (
@@ -92,6 +94,7 @@ function Tile({ value, label, sub }: { value: ReactNode; label: string; sub: str
 
 function TimelineItem({ entry: e, round }: { entry: Entry; round: Round }) {
   const { lookup, gameId } = useGame();
+  const { t, fmt } = useI18n();
   const roundEntries = lookup.entriesByRound.get(round.id) ?? [];
   const outcomes = outcomesByPlayer(roundEntries);
   const revealed = round.status !== 'planning';
@@ -106,45 +109,46 @@ function TimelineItem({ entry: e, round }: { entry: Entry; round: Round }) {
     <li className={`timeline-item outcome-${revealed ? e.outcome : 'none'}`}>
       <header className="timeline-head">
         <Link to={round === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${round.id}`} className="timeline-date">
-          {weekRange(round.startDate)}
+          {fmt.weekRange(round.startDate)}
         </Link>
-        {revealed ? <OutcomePill outcome={e.outcome} /> : <Pill icon="clock">Planning</Pill>}
-        {round.status === 'final' && <span className="muted small">{plural(entryPoints(e, outcomes), 'pt')}</span>}
+        {revealed ? <OutcomePill outcome={e.outcome} /> : <Pill icon="clock">{t.phase.planning}</Pill>}
+        {round.status === 'final' && <span className="muted small">{t.common.points(entryPoints(e, outcomes))}</span>}
       </header>
       <p className="timeline-goal" dir="auto">
-        {e.goal || <span className="muted">No goal recorded</span>}
+        {e.goal || <span className="muted">{t.profile.noGoal}</span>}
       </p>
       {e.excuse && (
-        <blockquote className="timeline-excuse" dir="auto">
-          {e.excuse}
+        <blockquote className="timeline-excuse">
+          <span dir="auto">{e.excuse}</span>
         </blockquote>
       )}
+      <ProofStrip entry={e} max={6} size="sm" />
       {e.notes && (
         <p className="timeline-notes">
-          <span className="muted">Notes · </span>
+          <span className="muted">{t.profile.notes} · </span>
           <span dir="auto">{e.notes}</span>
         </p>
       )}
       <dl className="facts">
         {!e.hidden && e.excusePickId != null && (
-          <Fact label="Called excuses on" verdict={verdict(e.excusePickId, 'failed')}>
+          <Fact label={t.profile.calledOn} verdict={verdict(e.excusePickId, 'failed')}>
             <Who id={e.excusePickId} reason={e.excuseReason} />
           </Fact>
         )}
         {!e.hidden && e.betPickId != null && (
-          <Fact label="Backed" verdict={verdict(e.betPickId, 'done')}>
+          <Fact label={t.profile.backed} verdict={verdict(e.betPickId, 'done')}>
             <Who id={e.betPickId} reason={e.betReason} />
           </Fact>
         )}
         {doubters.length > 0 && (
-          <Fact label="Doubted by">
+          <Fact label={t.profile.doubtedBy}>
             {doubters.map((x) => (
               <Who key={x.playerId} id={x.playerId} reason={x.excuseReason} />
             ))}
           </Fact>
         )}
         {backers.length > 0 && (
-          <Fact label="Backed by">
+          <Fact label={t.profile.backedBy}>
             {backers.map((x) => (
               <Who key={x.playerId} id={x.playerId} reason={x.betReason} />
             ))}
@@ -156,12 +160,13 @@ function TimelineItem({ entry: e, round }: { entry: Entry; round: Round }) {
 }
 
 function Fact({ label, verdict, children }: { label: string; verdict?: boolean; children: ReactNode }) {
+  const { t } = useI18n();
   return (
     <div className="fact">
       <dt>
         {label}
         {verdict !== undefined && (
-          <span className={`verdict ${verdict ? 'is-right' : 'is-wrong'}`} title={verdict ? 'Called it' : 'Wrong call'}>
+          <span className={`verdict ${verdict ? 'is-right' : 'is-wrong'}`} title={verdict ? t.round.calledIt : t.round.wrongCall}>
             <Icon name={verdict ? 'check' : 'x'} size={11} />
           </span>
         )}

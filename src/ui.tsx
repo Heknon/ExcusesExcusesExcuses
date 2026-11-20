@@ -11,7 +11,8 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 import type { Outcome, RoundStatus } from '../shared/types.ts';
-import { initials, OUTCOME_LABEL, PHASE_LABEL } from './format.ts';
+import { initials } from './format.ts';
+import { useI18n } from './i18n.tsx';
 
 /* ---------- icons (24px grid, stroke) ---------- */
 
@@ -41,14 +42,21 @@ const ICONS = {
   trophy: 'M8 21h8M12 17v4M7 4h10v5a5 5 0 01-10 0zM17 5h3v2a3 3 0 01-3 3M7 5H4v2a3 3 0 003 3',
   calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
   upload: 'M12 16V4M7 9l5-5 5 5M4 20h16',
+  camera: 'M3 8h3l2-3h8l2 3h3v12H3zM12 17a4 4 0 100-8 4 4 0 000 8z',
+  image: 'M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4M15.5 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3z',
+  globe: 'M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18',
+  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
 } as const;
+
+/** Icons that point in the reading direction and should mirror in right-to-left layouts. */
+const DIRECTIONAL = new Set<string>(['chevronLeft', 'chevronRight', 'logout']);
 
 export type IconName = keyof typeof ICONS;
 
 export function Icon({ name, size = 18, className }: { name: IconName; size?: number; className?: string }) {
   return (
     <svg
-      className={`icon ${className ?? ''}`}
+      className={`icon ${DIRECTIONAL.has(name) ? 'icon-directional' : ''} ${className ?? ''}`}
       width={size}
       height={size}
       viewBox="0 0 24 24"
@@ -94,7 +102,7 @@ const AVATAR_HUES = [12, 32, 145, 175, 205, 230, 265, 300, 335];
 
 export function Avatar({ name, id, size = 36, ring }: { name: string; id: number; size?: number; ring?: boolean }) {
   const hue = AVATAR_HUES[Math.abs(id) % AVATAR_HUES.length];
-  const text = /[֐-׿]/.test(name) ? name.trim().charAt(0) : initials(name);
+  const text = initials(name);
   return (
     <span
       className={`avatar ${ring ? 'avatar-ring' : ''}`}
@@ -135,11 +143,13 @@ export function Pill({ tone = 'neutral', icon, children }: { tone?: string; icon
   );
 }
 
+export const OUTCOME_ICON: Record<Outcome, IconName> = { pending: 'clock', done: 'check', partial: 'target', failed: 'x' };
+
 export function OutcomePill({ outcome }: { outcome: Outcome }) {
-  const icon: Record<Outcome, IconName> = { pending: 'clock', done: 'check', partial: 'target', failed: 'x' };
+  const { t } = useI18n();
   return (
-    <Pill tone={outcome} icon={icon[outcome]}>
-      {OUTCOME_LABEL[outcome]}
+    <Pill tone={outcome} icon={OUTCOME_ICON[outcome]}>
+      {t.outcome[outcome]}
     </Pill>
   );
 }
@@ -149,22 +159,18 @@ export function OutcomeDot({ outcome, title }: { outcome?: Outcome; title: strin
 }
 
 const PHASES: RoundStatus[] = ['planning', 'live', 'final'];
-const PHASE_HINT: Record<RoundStatus, string> = {
-  planning: 'Lock in your moves',
-  live: 'Picks revealed',
-  final: 'Scored',
-};
 
 export function PhaseSteps({ status }: { status: RoundStatus }) {
+  const { t } = useI18n();
   const current = PHASES.indexOf(status);
   return (
-    <ol className="phases" aria-label="Round phase">
+    <ol className="phases">
       {PHASES.map((p, i) => (
         <li key={p} className={`phase ${i < current ? 'is-past' : ''} ${i === current ? 'is-current' : ''}`} aria-current={i === current ? 'step' : undefined}>
           <span className="phase-marker">{i < current ? <Icon name="check" size={14} /> : i + 1}</span>
           <span className="phase-text">
-            <span className="phase-name">{PHASE_LABEL[p]}</span>
-            <span className="phase-hint">{PHASE_HINT[p]}</span>
+            <span className="phase-name">{t.phase[p]}</span>
+            <span className="phase-hint">{t.phaseHint[p]}</span>
           </span>
         </li>
       ))}
@@ -240,7 +246,20 @@ export function EmptyState({ icon, title, children, action }: { icon?: IconName;
   );
 }
 
-export function Modal({ title, onClose, children, footer }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+export function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+  className,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  className?: string;
+}) {
+  const { t } = useI18n();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -250,7 +269,7 @@ export function Modal({ title, onClose, children, footer }: { title: string; onC
   return (
     <dialog
       ref={ref}
-      className="modal"
+      className={`modal ${className ?? ''}`}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
@@ -260,7 +279,7 @@ export function Modal({ title, onClose, children, footer }: { title: string; onC
       <div className="modal-card">
         <header className="modal-header">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={onClose} aria-label={t.common.close}>
             <Icon name="x" />
           </button>
         </header>
@@ -272,8 +291,9 @@ export function Modal({ title, onClose, children, footer }: { title: string; onC
 }
 
 export function Spinner() {
+  const { t } = useI18n();
   return (
-    <div className="page-loading" role="status" aria-label="Loading">
+    <div className="page-loading" role="status" aria-label={t.common.loading}>
       <span className="spinner spinner-lg" />
     </div>
   );
@@ -316,12 +336,13 @@ export const useToast = () => useContext(ToastContext);
 /** Copy text and confirm with a toast. */
 export function useCopy() {
   const toast = useToast();
-  return async (text: string, label = 'Copied') => {
+  const { t } = useI18n();
+  return async (text: string, label = t.common.copied) => {
     try {
       await navigator.clipboard.writeText(text);
       toast(label);
     } catch {
-      window.prompt('Copy this:', text);
+      window.prompt(t.common.copyPrompt, text);
     }
   };
 }

@@ -34,8 +34,15 @@ function client() {
     assert.equal(r.status, 200, `${method} ${path} → ${r.status} ${JSON.stringify(r.data)}`);
     return r.data;
   };
-  return { call, ok };
+  const upload = async (path: string, bytes: Buffer, type = 'image/jpeg') => {
+    const res = await fetch(base + path, { method: 'POST', headers: { 'content-type': type, cookie }, body: new Uint8Array(bytes) });
+    return { status: res.status, data: (await res.json()) as any };
+  };
+  const raw = (path: string) => fetch(base + path, { headers: { cookie } });
+  return { call, ok, upload, raw };
 }
+
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 7)]);
 
 describe('api', { skip: !URL_ && 'TEST_DATABASE_URL not set' }, () => {
   before(async () => {
@@ -218,5 +225,66 @@ describe('api', { skip: !URL_ && 'TEST_DATABASE_URL not set' }, () => {
     const e = st.entries.find((x) => x.playerId === mike.id)!;
     assert.equal(e.excusePickId, st.players.find((p) => p.name === 'אלי')!.id);
     assert.equal(e.submitted, true);
+  });
+
+  test('language preference and error codes', async () => {
+    const a = client();
+    await a.ok('POST', '/api/auth/signup', { email: 'lang@x.io', name: 'Lang', password: 'password1', locale: 'he' });
+    assert.equal((await a.ok('GET', '/api/me')).user.locale, 'he');
+    await a.ok('PATCH', '/api/me', { locale: 'en' });
+    assert.equal((await a.ok('GET', '/api/me')).user.locale, 'en');
+    const bad = await a.call('PATCH', '/api/me', { locale: 'fr' });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.data.code, 'invalid_locale');
+    const wrong = await client().call('POST', '/api/auth/login', { email: 'lang@x.io', password: 'nope-nope' });
+    assert.equal(wrong.data.code, 'wrong_credentials');
+  });
+
+  test('proof photos: who can add, see and delete them', async () => {
+    const admin = client();
+    const p1 = client();
+    const outsider = client();
+    await admin.ok('POST', '/api/auth/signup', { email: 'padmin@x.io', name: 'PA', password: 'password1' });
+    await p1.ok('POST', '/api/auth/signup', { email: 'p1@x.io', name: 'P1', password: 'password1' });
+    await outsider.ok('POST', '/api/auth/signup', { email: 'out@x.io', name: 'Out', password: 'password1' });
+    const { id: g } = await admin.ok('POST', '/api/games', { name: 'Proofs' });
+    const code = (await admin.ok('GET', `/api/games/${g}`)).game.inviteCode;
+    await p1.ok('POST', `/api/invites/${code}`, {});
+    let st: GameState = await admin.ok('GET', `/api/games/${g}`);
+    const req = st.players.find((x) => x.status === 'pending')!;
+    await admin.ok('PATCH', `/api/games/${g}/players/${req.id}`, { action: 'approve' });
+    const round = await admin.ok('POST', `/api/games/${g}/rounds`, { startDate: '2026-11-15' });
+    const url = (pid: number) => `/api/games/${g}/rounds/${round.id}/entries/${pid}/proofs`;
+    const adminId = st.me.playerId;
+
+    assert.equal((await p1.upload(url(req.id), JPEG)).data.code, 'proof_phase', 'not before the week starts');
+    await admin.ok('PATCH', `/api/games/${g}/rounds/${round.id}`, { status: 'live' });
+
+    const up = await p1.upload(url(req.id), JPEG);
+    assert.equal(up.status, 200);
+    assert.equal((await p1.upload(url(adminId), JPEG)).status, 403, 'not on someone else’s entry');
+    assert.equal((await p1.upload(url(req.id), Buffer.from('<html><script>alert(1)</script></html>'.padEnd(64)), 'image/png')).data.code, 'proof_not_image');
+    assert.equal((await p1.call('POST', url(req.id), {})).status, 415, 'JSON is not an image');
+    assert.equal((await outsider.upload(url(req.id), JPEG)).status, 404);
+
+    st = await admin.ok('GET', `/api/games/${g}`);
+    assert.deepEqual(st.entries.find((e) => e.playerId === req.id)!.proofs.map((x) => x.id), [up.data.id]);
+
+    const img = await admin.raw(`/api/proofs/${up.data.id}`);
+    assert.equal(img.status, 200);
+    assert.equal(img.headers.get('content-type'), 'image/jpeg');
+    assert.equal(img.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await img.arrayBuffer()), JPEG);
+    assert.equal((await outsider.raw(`/api/proofs/${up.data.id}`)).status, 404, 'outsiders can’t see proofs');
+    assert.equal((await client().raw(`/api/proofs/${up.data.id}`)).status, 401);
+
+    for (let i = 0; i < 5; i++) assert.equal((await p1.upload(url(req.id), JPEG)).status, 200);
+    assert.equal((await p1.upload(url(req.id), JPEG)).data.code, 'proof_limit');
+    const big = Buffer.concat([JPEG, Buffer.alloc(6 * 1024 * 1024)]);
+    assert.equal((await admin.upload(url(adminId), big)).status, 413);
+
+    assert.equal((await outsider.call('DELETE', `/api/proofs/${up.data.id}`, {})).status, 404);
+    await p1.ok('DELETE', `/api/proofs/${up.data.id}`, {});
+    assert.equal((await admin.raw(`/api/proofs/${up.data.id}`)).status, 404);
   });
 });

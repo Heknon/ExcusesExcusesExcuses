@@ -1,10 +1,13 @@
-import type { EntryPatch, GameState, Me, Player, Round, RoundPatch, User } from '../shared/types.ts';
+import type { EntryPatch, GameState, Locale, Me, Player, Proof, Round, RoundPatch, User } from '../shared/types.ts';
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Error code from shared/errors.ts; translate with useI18n().errorText. */
+  code: string | undefined;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -19,7 +22,15 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !path.startsWith('/auth/')) onSignedOut.dispatchEvent(new Event('signedout'));
-  if (!res.ok) throw new ApiError(res.status, data.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(res.status, data.error ?? `Request failed (${res.status})`, data.code);
+  return data as T;
+}
+
+async function uploadImage<T>(path: string, blob: Blob): Promise<T> {
+  const res = await fetch(`/api${path}`, { method: 'POST', headers: { 'content-type': blob.type || 'image/jpeg' }, body: blob });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) onSignedOut.dispatchEvent(new Event('signedout'));
+  if (!res.ok) throw new ApiError(res.status, data.error ?? `Upload failed (${res.status})`, data.code);
   return data as T;
 }
 
@@ -33,11 +44,11 @@ export interface ImportRow {
 }
 
 export const api = {
-  signup: (input: { email: string; name: string; password: string }) => call<{ user: User }>('POST', '/auth/signup', input),
+  signup: (input: { email: string; name: string; password: string; locale: Locale }) => call<{ user: User }>('POST', '/auth/signup', input),
   login: (input: { email: string; password: string }) => call<{ user: User }>('POST', '/auth/login', input),
   logout: () => call('POST', '/auth/logout'),
   me: () => call<Me>('GET', '/me'),
-  updateProfile: (input: { name: string }) => call<User>('PATCH', '/me', input),
+  updateProfile: (input: { name?: string; locale?: Locale }) => call<User>('PATCH', '/me', input),
 
   createGame: (name: string) => call<{ id: number }>('POST', '/games', { name }),
   lookupInvite: (code: string) =>
@@ -66,4 +77,9 @@ export const api = {
     call('PATCH', `/games/${gameId}/rounds/${roundId}/entries/${playerId}`, patch),
   removeEntry: (gameId: number, roundId: number, playerId: number) =>
     call('DELETE', `/games/${gameId}/rounds/${roundId}/entries/${playerId}`),
+
+  addProof: (gameId: number, roundId: number, playerId: number, image: Blob) =>
+    uploadImage<Proof>(`/games/${gameId}/rounds/${roundId}/entries/${playerId}/proofs`, image),
+  deleteProof: (proofId: number) => call('DELETE', `/proofs/${proofId}`),
+  proofUrl: (proofId: number) => `/api/proofs/${proofId}`,
 };

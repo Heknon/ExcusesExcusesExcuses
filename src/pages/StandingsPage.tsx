@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { computeStats, POINTS, ratio } from '../../shared/scoring.ts';
-import { OUTCOME_LABEL, percent, shortDate } from '../format.ts';
+import { useI18n } from '../i18n.tsx';
 import { Link } from '../router.tsx';
 import { useGame } from '../session.tsx';
 import { Avatar, EmptyState, OutcomeDot } from '../ui.tsx';
@@ -9,6 +9,7 @@ const FORM_ROUNDS = 6;
 
 export function StandingsPage() {
   const { state, lookup, gameId } = useGame();
+  const { t, fmt } = useI18n();
   // Only scored rounds count toward standings.
   const finals = useMemo(() => lookup.rounds.filter((r) => r.status === 'final'), [lookup.rounds]);
   const stats = useMemo(
@@ -18,8 +19,8 @@ export function StandingsPage() {
 
   if (!stats.length) {
     return (
-      <EmptyState icon="trophy" title="No scored rounds yet">
-        Standings start once the first round is scored.
+      <EmptyState icon="trophy" title={t.standings.emptyTitle}>
+        {t.standings.emptyBody}
       </EmptyState>
     );
   }
@@ -48,22 +49,22 @@ export function StandingsPage() {
                   <span className="leader-form">
                     {formRounds.map((r) => {
                       const e = lookup.entriesByRound.get(r.id)?.find((x) => x.playerId === s.playerId);
-                      return <OutcomeDot key={r.id} outcome={e?.outcome} title={`${shortDate(r.startDate)}: ${e ? OUTCOME_LABEL[e.outcome] : 'Sat out'}`} />;
+                      return <OutcomeDot key={r.id} outcome={e?.outcome} title={`${fmt.shortDate(r.startDate)}: ${e ? t.outcome[e.outcome] : t.standings.satOut}`} />;
                     })}
                   </span>
                 </span>
               </Link>
               <span className="leader-stat">
-                <b>{percent(completion)}</b>
-                <span>delivered</span>
+                <b>{fmt.percent(completion)}</b>
+                <span>{t.standings.delivered}</span>
               </span>
               <span className="leader-stat">
-                <b>{percent(calls)}</b>
-                <span>reads right</span>
+                <b>{fmt.percent(calls)}</b>
+                <span>{t.standings.readsRight}</span>
               </span>
               <span className="leader-stat">
                 <b>{s.streak || '—'}</b>
-                <span>streak</span>
+                <span>{t.standings.streak}</span>
               </span>
               <span className="leader-points">
                 <b>{s.points}</b>
@@ -77,7 +78,7 @@ export function StandingsPage() {
       </ol>
 
       <section className="section">
-        <h3 className="section-title">Round by round</h3>
+        <h3 className="section-title">{t.standings.byRound}</h3>
         <div className="table-scroll">
           <table className="grid-table">
             <thead>
@@ -85,7 +86,7 @@ export function StandingsPage() {
                 <th />
                 {grid.map((r) => (
                   <th key={r.id}>
-                    <Link to={r === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${r.id}`}>{shortDate(r.startDate)}</Link>
+                    <Link to={r === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${r.id}`}>{fmt.shortDate(r.startDate)}</Link>
                   </th>
                 ))}
               </tr>
@@ -100,7 +101,7 @@ export function StandingsPage() {
                     const e = lookup.entriesByRound.get(r.id)?.find((x) => x.playerId === s.playerId);
                     return (
                       <td key={r.id}>
-                        <OutcomeDot outcome={e?.outcome} title={`${shortDate(r.startDate)}: ${e ? OUTCOME_LABEL[e.outcome] : 'Sat out'}`} />
+                        <OutcomeDot outcome={e?.outcome} title={`${fmt.shortDate(r.startDate)}: ${e ? t.outcome[e.outcome] : t.standings.satOut}`} />
                       </td>
                     );
                   })}
@@ -112,22 +113,22 @@ export function StandingsPage() {
       </section>
 
       <section className="section scoring">
-        <h3 className="section-title">How scoring works</h3>
+        <h3 className="section-title">{t.standings.how}</h3>
         <ul className="scoring-list">
           <li>
-            <b>+{POINTS.done}</b> goal done
+            <b dir="ltr">+{POINTS.done}</b> {t.standings.rules.done}
           </li>
           <li>
-            <b>+{POINTS.partial}</b> partly done
+            <b dir="ltr">+{POINTS.partial}</b> {t.standings.rules.partial}
           </li>
           <li>
-            <b>+{POINTS.callHit}</b> you called excuses on someone and they missed
+            <b dir="ltr">+{POINTS.callHit}</b> {t.standings.rules.call}
           </li>
           <li>
-            <b>+{POINTS.betHit}</b> you backed someone and they delivered
+            <b dir="ltr">+{POINTS.betHit}</b> {t.standings.rules.bet}
           </li>
         </ul>
-        <p className="muted small">“Reads right” is how often your excuse calls and bets were correct. Only scored rounds count.</p>
+        <p className="muted small">{t.standings.footnote}</p>
       </section>
     </div>
   );

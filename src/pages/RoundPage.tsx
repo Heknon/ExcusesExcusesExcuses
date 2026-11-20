@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { entryPoints, isResolved, outcomesByPlayer, POINTS } from '../../shared/scoring.ts';
 import type { Entry, Outcome, Player, Round } from '../../shared/types.ts';
 import { api } from '../api.ts';
-import { addDays, daysLeft, OUTCOME_LABEL, plural, weekRange, weekStart } from '../format.ts';
+import { addDays, daysLeft, weekStart } from '../format.ts';
+import { useI18n } from '../i18n.tsx';
+import { ProofStrip, ProofUploader } from '../proofs.tsx';
 import { Link, navigate } from '../router.tsx';
 import { useGame } from '../session.tsx';
 import {
@@ -12,6 +14,7 @@ import {
   EmptyState,
   Icon,
   Modal,
+  OUTCOME_ICON,
   OutcomePill,
   PhaseSteps,
   Pill,
@@ -20,15 +23,16 @@ import {
 
 export function RoundPage({ roundId }: { roundId?: number }) {
   const { lookup, gameId } = useGame();
+  const { t, fmt } = useI18n();
   const round = roundId ? lookup.round.get(roundId) : lookup.current;
 
   if (!round) {
-    if (roundId) return <EmptyState icon="x" title="Round not found" />;
+    if (roundId) return <EmptyState icon="x" title={t.round.notFound} />;
     return lookup.isAdmin ? (
       <StartRoundCard first />
     ) : (
-      <EmptyState icon="clock" title="No rounds yet">
-        The first round starts when the admin opens it. You’ll set your goal and make your picks then.
+      <EmptyState icon="clock" title={t.round.noRoundsTitle}>
+        {t.round.noRoundsBody}
       </EmptyState>
     );
   }
@@ -37,7 +41,9 @@ export function RoundPage({ roundId }: { roundId?: number }) {
   const number = lookup.rounds.length - index;
   const newer = lookup.rounds[index - 1];
   const older = lookup.rounds[index + 1];
-  const entries = (lookup.entriesByRound.get(round.id) ?? []).slice().sort((a, b) => seat(lookup.player.get(a.playerId)) - seat(lookup.player.get(b.playerId)));
+  const entries = (lookup.entriesByRound.get(round.id) ?? [])
+    .slice()
+    .sort((a, b) => seat(lookup.player.get(a.playerId)) - seat(lookup.player.get(b.playerId)));
   const mine = entries.find((e) => e.playerId === lookup.me.id);
   const isCurrent = round === lookup.current;
   const left = daysLeft(round.startDate);
@@ -50,29 +56,32 @@ export function RoundPage({ roundId }: { roundId?: number }) {
         <div className="round-heading">
           <div className="round-nav">
             {older ? (
-              <Link to={`/g/${gameId}/rounds/${older.id}`} className="icon-btn" aria-label="Previous round">
+              <Link to={`/g/${gameId}/rounds/${older.id}`} className="icon-btn" aria-label={t.round.prev}>
                 <Icon name="chevronLeft" />
               </Link>
             ) : (
               <span className="icon-btn is-disabled" />
             )}
-            <span className="eyebrow">Round {number}</span>
+            <span className="eyebrow">{t.round.number(number)}</span>
             {newer ? (
-              <Link to={newer === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${newer.id}`} className="icon-btn" aria-label="Next round">
+              <Link to={newer === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${newer.id}`} className="icon-btn" aria-label={t.round.next}>
                 <Icon name="chevronRight" />
               </Link>
             ) : (
               <span className="icon-btn is-disabled" />
             )}
           </div>
-          <h2 className="display round-title">{weekRange(round.startDate)}</h2>
+          <h2 className="display round-title">{fmt.weekRange(round.startDate)}</h2>
           {round.title && (
             <p className="round-subtitle" dir="auto">
               {round.title}
             </p>
           )}
-          {round.status === 'live' && left > 0 && <Pill tone="live" icon="clock">{left === 1 ? 'Last day' : `${left} days left`}</Pill>}
-          {round.status === 'live' && left <= 0 && <Pill tone="live" icon="clock">Week’s over — report your result</Pill>}
+          {round.status === 'live' && (
+            <Pill tone="live" icon="clock">
+              {left > 0 ? t.round.daysLeft(left) : t.round.weekOver}
+            </Pill>
+          )}
         </div>
         <PhaseSteps status={round.status} />
       </header>
@@ -81,27 +90,15 @@ export function RoundPage({ roundId }: { roundId?: number }) {
 
       {mine && lookup.me.status === 'active' && <YourMove round={round} entry={mine} entries={entries} />}
 
-      {round.status === 'final' && <RoundResults entries={entries} />}
-
       <section className="section">
         <div className="section-head">
-          <h3 className="section-title">The table</h3>
-          {round.status === 'planning' && (
-            <span className="muted small">
-              <Icon name="eyeOff" size={14} /> Picks are revealed when the week starts
-            </span>
-          )}
+          <h3 className="section-title">{t.round.table}</h3>
+          <TableSummary round={round} entries={entries} />
         </div>
         {entries.length === 0 ? (
-          <EmptyState title="No one is in this round." />
+          <EmptyState title={t.round.nobody} />
         ) : (
-          <ul className="table-grid">
-            {entries.map((e) => (
-              <li key={e.playerId}>
-                <PlayerCard round={round} entry={e} entries={entries} />
-              </li>
-            ))}
-          </ul>
+          <ScoreTable round={round} entries={entries} />
         )}
       </section>
 
@@ -110,12 +107,14 @@ export function RoundPage({ roundId }: { roundId?: number }) {
   );
 }
 
+/** You first, then everyone in the order they joined. */
 const seat = (p: Player | undefined) => (p?.isMe ? -1 : p?.id ?? 0);
 
 /* ---------- admin ---------- */
 
 function StartRoundCard({ first, after }: { first?: boolean; after?: Round }) {
   const { gameId, run, lookup } = useGame();
+  const { t } = useI18n();
   const taken = new Set(lookup.rounds.map((r) => r.startDate));
   let suggested = after ? addDays(after.startDate, 7) : weekStart();
   if (after && suggested < weekStart()) suggested = weekStart();
@@ -125,7 +124,7 @@ function StartRoundCard({ first, after }: { first?: boolean; after?: Round }) {
 
   const start = async () => {
     setBusy(true);
-    const r = await run(() => api.createRound(gameId, date), 'Round opened');
+    const r = await run(() => api.createRound(gameId, date), t.round.opened);
     setBusy(false);
     if (r) navigate(`/g/${gameId}`, { keepScroll: true });
   };
@@ -133,25 +132,21 @@ function StartRoundCard({ first, after }: { first?: boolean; after?: Round }) {
   return (
     <div className="start-round">
       <div>
-        <h2 className="start-round-title">{first ? 'Start the first round' : 'Ready for the next round?'}</h2>
-        <p className="muted">
-          {lookup.active.length < 2
-            ? 'You’ll want at least two players. Share the invite link from the Players tab first.'
-            : `Everyone sets a goal and makes their picks in secret. ${plural(lookup.active.length, 'player')} will be dealt in.`}
-        </p>
+        <h2 className="start-round-title">{first ? t.round.startFirst : t.round.startNext}</h2>
+        <p className="muted">{lookup.active.length < 2 ? t.round.needPlayers : t.round.dealtIn(lookup.active.length)}</p>
       </div>
       <div className="start-round-actions">
         <label className="field field-inline">
-          <span className="field-label">Week of</span>
+          <span className="field-label">{t.round.weekOf}</span>
           <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
         <Button variant="primary" icon="flag" loading={busy} onClick={start}>
-          Open round
+          {t.round.open}
         </Button>
       </div>
       {first && (
         <p className="muted small">
-          Already playing in WhatsApp? <Link to={`/g/${gameId}/settings#import`}>Import a round</Link> instead.
+          {t.round.importInstead} <Link to={`/g/${gameId}/settings#import`}>{t.round.importLink}</Link>
         </p>
       )}
     </div>
@@ -160,23 +155,30 @@ function StartRoundCard({ first, after }: { first?: boolean; after?: Round }) {
 
 function AdminBar({ round, entries }: { round: Round; entries: Entry[] }) {
   const { gameId, run, lookup } = useGame();
+  const { t, fmt } = useI18n();
   const [confirm, setConfirm] = useState<null | 'live' | 'final' | 'delete'>(null);
   const locked = entries.filter((e) => e.submitted).length;
   const reported = entries.filter((e) => isResolved(e.outcome)).length;
-  const missing = (pred: (e: Entry) => boolean) => entries.filter((e) => !pred(e)).map((e) => lookup.name(e.playerId));
+  const missing = (pred: (e: Entry) => boolean) =>
+    entries
+      .filter((e) => !pred(e))
+      .map((e) => lookup.name(e.playerId))
+      .join(', ');
 
   const setStatus = async (status: Round['status']) => {
     setConfirm(null);
-    await run(() => api.updateRound(gameId, round.id, { status }), status === 'live' ? 'Picks revealed. The week is on.' : status === 'final' ? 'Round scored' : 'Round reopened');
+    await run(
+      () => api.updateRound(gameId, round.id, { status }),
+      status === 'live' ? t.round.revealed : status === 'final' ? t.round.scored : t.round.reopened,
+    );
   };
 
   const progress = round.status === 'planning' ? locked : reported;
-  const verb = round.status === 'planning' ? 'locked in' : 'reported';
 
   return (
     <div className="admin-bar">
       <span className="admin-tag">
-        <Icon name="crown" size={14} /> Admin
+        <Icon name="crown" size={14} /> {t.common.admin}
       </span>
       {round.status !== 'final' && (
         <div className="admin-progress">
@@ -184,7 +186,7 @@ function AdminBar({ round, entries }: { round: Round; entries: Entry[] }) {
             <span style={{ width: `${entries.length ? (progress / entries.length) * 100 : 0}%` }} />
           </div>
           <span className="small">
-            {progress} of {entries.length} {verb}
+            {round.status === 'planning' ? t.round.lockedProgress(locked, entries.length) : t.round.reportedProgress(reported, entries.length)}
           </span>
         </div>
       )}
@@ -192,93 +194,89 @@ function AdminBar({ round, entries }: { round: Round; entries: Entry[] }) {
         {round.status === 'planning' && (
           <>
             <Button size="sm" variant="ghost" onClick={() => setConfirm('delete')}>
-              Delete round
+              {t.round.deleteRound}
             </Button>
             <Button size="sm" variant="primary" icon="eye" onClick={() => (locked < entries.length ? setConfirm('live') : setStatus('live'))}>
-              Start the week
+              {t.round.startWeek}
             </Button>
           </>
         )}
         {round.status === 'live' && (
           <>
             <Button size="sm" variant="ghost" onClick={() => setStatus('planning')}>
-              Back to planning
+              {t.round.backToPlanning}
             </Button>
             <Button size="sm" variant="primary" icon="trophy" onClick={() => (reported < entries.length ? setConfirm('final') : setStatus('final'))}>
-              Score the round
+              {t.round.score}
             </Button>
           </>
         )}
         {round.status === 'final' && (
           <Button size="sm" variant="ghost" onClick={() => setStatus('live')}>
-            Reopen results
+            {t.round.reopen}
           </Button>
         )}
       </div>
 
       {confirm === 'live' && (
         <Modal
-          title="Start the week?"
+          title={t.round.confirmStartTitle}
           onClose={() => setConfirm(null)}
           footer={
             <>
               <Button variant="ghost" onClick={() => setConfirm(null)}>
-                Wait
+                {t.round.wait}
               </Button>
               <Button variant="primary" onClick={() => setStatus('live')}>
-                Start anyway
+                {t.round.startAnyway}
               </Button>
             </>
           }
         >
-          <p>
-            Not everyone has locked in: <b dir="auto">{missing((e) => e.submitted).join(', ')}</b>. Starting reveals everyone’s picks and locks goals for the week.
-          </p>
+          <p>{t.round.confirmStartBody(missing((e) => e.submitted))}</p>
         </Modal>
       )}
       {confirm === 'final' && (
         <Modal
-          title="Score the round?"
+          title={t.round.confirmScoreTitle}
           onClose={() => setConfirm(null)}
           footer={
             <>
               <Button variant="ghost" onClick={() => setConfirm(null)}>
-                Wait
+                {t.round.wait}
               </Button>
               <Button variant="primary" onClick={() => setStatus('final')}>
-                Score anyway
+                {t.round.scoreAnyway}
               </Button>
             </>
           }
         >
-          <p>
-            Still no result from <b dir="auto">{missing((e) => isResolved(e.outcome)).join(', ')}</b>. They’ll score nothing for their own goal unless you set it on their card first.
-          </p>
+          <p>{t.round.confirmScoreBody(missing((e) => isResolved(e.outcome)))}</p>
         </Modal>
       )}
       {confirm === 'delete' && (
         <Modal
-          title="Delete this round?"
+          title={t.round.confirmDeleteTitle}
           onClose={() => setConfirm(null)}
           footer={
             <>
               <Button variant="ghost" onClick={() => setConfirm(null)}>
-                Keep it
+                {t.round.keep}
               </Button>
               <Button
                 variant="danger"
                 onClick={async () => {
                   setConfirm(null);
-                  await run(() => api.deleteRound(gameId, round.id), 'Round deleted');
+                  await run(() => api.deleteRound(gameId, round.id), t.round.deleted);
                   navigate(`/g/${gameId}`, { replace: true });
                 }}
               >
-                Delete round
+                {t.round.deleteRound}
               </Button>
             </>
           }
         >
-          <p>Everyone’s goals and picks for {weekRange(round.startDate)} will be lost.</p>
+          <p>{t.round.confirmDeleteBody(fmt.weekRange(round.startDate))}</p>
         </Modal>
       )}
     </div>
@@ -288,6 +286,7 @@ function AdminBar({ round, entries }: { round: Round; entries: Entry[] }) {
 /* ---------- your move ---------- */
 
 function YourMove({ round, entry, entries }: { round: Round; entry: Entry; entries: Entry[] }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(!entry.submitted);
   useEffect(() => {
     if (!entry.submitted) setEditing(true);
@@ -300,17 +299,17 @@ function YourMove({ round, entry, entries }: { round: Round; entry: Entry; entri
       <section className="move move-locked">
         <header className="move-header">
           <div>
-            <p className="eyebrow">Your move</p>
+            <p className="eyebrow">{t.round.yourMove}</p>
             <h3 className="move-title">
-              <Icon name="lock" size={18} /> Locked in
+              <Icon name="lock" size={18} /> {t.round.lockedIn}
             </h3>
           </div>
           <Button size="sm" icon="edit" onClick={() => setEditing(true)}>
-            Change
+            {t.round.change}
           </Button>
         </header>
         <MoveSummary entry={entry} />
-        <p className="muted small">You can change your move until the admin starts the week.</p>
+        <p className="muted small">{t.round.changeHint}</p>
       </section>
     );
   }
@@ -320,6 +319,7 @@ function YourMove({ round, entry, entries }: { round: Round; entry: Entry; entri
 
 function MoveForm({ round, entry, onDone }: { round: Round; entry: Entry; onDone: () => void }) {
   const { gameId, run, lookup } = useGame();
+  const { t } = useI18n();
   const [goal, setGoal] = useState(entry.goal);
   const [excusePickId, setExcusePick] = useState(entry.excusePickId);
   const [excuseReason, setExcuseReason] = useState(entry.excuseReason);
@@ -336,7 +336,7 @@ function MoveForm({ round, entry, onDone }: { round: Round; entry: Entry; onDone
     setBusy(true);
     const ok = await run(
       () => api.updateEntry(gameId, round.id, entry.playerId, { goal, excusePickId, excuseReason, betPickId, betReason, submitted: true }),
-      'Locked in',
+      t.round.lockedToast,
     );
     setBusy(false);
     if (ok !== undefined) onDone();
@@ -346,12 +346,12 @@ function MoveForm({ round, entry, onDone }: { round: Round; entry: Entry; onDone
     <section className="move">
       <header className="move-header">
         <div>
-          <p className="eyebrow">Your move</p>
-          <h3 className="move-title">{entry.submitted ? 'Change your move' : 'What’s the plan this week?'}</h3>
+          <p className="eyebrow">{t.round.yourMove}</p>
+          <h3 className="move-title">{entry.submitted ? t.round.changeTitle : t.round.planTitle}</h3>
         </div>
         {entry.submitted && (
           <Button size="sm" variant="ghost" onClick={onDone}>
-            Cancel
+            {t.common.cancel}
           </Button>
         )}
       </header>
@@ -360,37 +360,37 @@ function MoveForm({ round, entry, onDone }: { round: Round; entry: Entry; onDone
         <span className="move-step-num">1</span>
         <div className="move-step-body">
           <label className="move-step-title" htmlFor="goal">
-            Your goal
+            {t.round.goal}
           </label>
-          <p className="move-step-hint">Something specific you can clearly say you did or didn’t do by Saturday.</p>
-          <AutoTextarea id="goal" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="e.g. Run 5 km on Friday" maxLength={500} />
+          <p className="move-step-hint">{t.round.goalHint}</p>
+          <AutoTextarea id="goal" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder={t.round.goalPlaceholder} maxLength={500} />
         </div>
       </div>
 
       <div className="move-step">
         <span className="move-step-num">2</span>
         <div className="move-step-body">
-          <span className="move-step-title">Who’ll come back with excuses?</span>
-          <p className="move-step-hint">+{POINTS.callHit} if they miss. Nobody sees this until the week starts.</p>
-          <PlayerPicker tone="call" label="Who’ll come back with excuses" players={roundPlayers} value={excusePickId} onChange={setExcusePick} />
-          <AutoTextarea value={excuseReason} onChange={(e) => setExcuseReason(e.target.value)} placeholder="Why? (optional)" aria-label="Why they’ll have excuses" maxLength={500} />
+          <span className="move-step-title">{t.round.callTitle}</span>
+          <p className="move-step-hint">{t.round.callHint(POINTS.callHit)}</p>
+          <PlayerPicker tone="call" label={t.round.callTitle} players={roundPlayers} value={excusePickId} onChange={setExcusePick} />
+          <AutoTextarea value={excuseReason} onChange={(e) => setExcuseReason(e.target.value)} placeholder={t.round.why} aria-label={t.round.whyCall} maxLength={500} />
         </div>
       </div>
 
       <div className="move-step">
         <span className="move-step-num">3</span>
         <div className="move-step-body">
-          <span className="move-step-title">Who’ll actually deliver?</span>
-          <p className="move-step-hint">+{POINTS.betHit} if they get it done.</p>
-          <PlayerPicker tone="bet" label="Who’ll deliver" players={roundPlayers} value={betPickId} onChange={setBetPick} />
-          <AutoTextarea value={betReason} onChange={(e) => setBetReason(e.target.value)} placeholder="Why? (optional)" aria-label="Why they’ll deliver" maxLength={500} />
+          <span className="move-step-title">{t.round.betTitle}</span>
+          <p className="move-step-hint">{t.round.betHint(POINTS.betHit)}</p>
+          <PlayerPicker tone="bet" label={t.round.betTitle} players={roundPlayers} value={betPickId} onChange={setBetPick} />
+          <AutoTextarea value={betReason} onChange={(e) => setBetReason(e.target.value)} placeholder={t.round.why} aria-label={t.round.whyBet} maxLength={500} />
         </div>
       </div>
 
       <footer className="move-footer">
-        <span className="muted small">{ready ? 'You can change this until the week starts.' : 'Set a goal and make both picks to lock in.'}</span>
+        <span className="muted small">{ready ? t.round.readyHint : t.round.notReadyHint}</span>
         <Button variant="primary" size="lg" icon="lock" disabled={!ready} loading={busy} onClick={lockIn}>
-          Lock it in
+          {t.round.lockIt}
         </Button>
       </footer>
     </section>
@@ -398,26 +398,35 @@ function MoveForm({ round, entry, onDone }: { round: Round; entry: Entry; onDone
 }
 
 function MoveSummary({ entry }: { entry: Entry }) {
+  const { t } = useI18n();
   return (
     <dl className="move-summary">
       <div>
-        <dt>Goal</dt>
+        <dt>{t.round.goalLabel}</dt>
         <dd>
           <span dir="auto">{entry.goal}</span>
         </dd>
       </div>
       <div>
-        <dt>Excuses from</dt>
+        <dt>{t.round.excusesFrom}</dt>
         <dd>
           <PickChip id={entry.excusePickId} />
-          {entry.excuseReason && <span className="reason" dir="auto">{entry.excuseReason}</span>}
+          {entry.excuseReason && (
+            <span className="reason" dir="auto">
+              {entry.excuseReason}
+            </span>
+          )}
         </dd>
       </div>
       <div>
-        <dt>Delivering</dt>
+        <dt>{t.round.delivering}</dt>
         <dd>
           <PickChip id={entry.betPickId} />
-          {entry.betReason && <span className="reason" dir="auto">{entry.betReason}</span>}
+          {entry.betReason && (
+            <span className="reason" dir="auto">
+              {entry.betReason}
+            </span>
+          )}
         </dd>
       </div>
     </dl>
@@ -426,14 +435,15 @@ function MoveSummary({ entry }: { entry: Entry }) {
 
 function PickChip({ id, verdict }: { id: number | null; verdict?: boolean }) {
   const { lookup, gameId } = useGame();
-  if (id == null) return <span className="muted">No pick</span>;
+  const { t } = useI18n();
+  if (id == null) return <span className="muted">{t.common.noPick}</span>;
   const p = lookup.player.get(id);
   return (
     <Link to={`/g/${gameId}/players/${id}`} className="pick-chip">
       <Avatar id={id} name={p?.name ?? '?'} size={22} />
-      <span dir="auto">{p?.name ?? 'Former player'}</span>
+      <span dir="auto">{p?.name ?? t.common.formerPlayer}</span>
       {verdict !== undefined && (
-        <span className={`verdict ${verdict ? 'is-right' : 'is-wrong'}`} title={verdict ? 'Called it' : 'Wrong call'}>
+        <span className={`verdict ${verdict ? 'is-right' : 'is-wrong'}`} title={verdict ? t.round.calledIt : t.round.wrongCall}>
           <Icon name={verdict ? 'check' : 'x'} size={12} />
         </span>
       )}
@@ -441,14 +451,11 @@ function PickChip({ id, verdict }: { id: number | null; verdict?: boolean }) {
   );
 }
 
-const SETTABLE: { outcome: Outcome; title: string; hint: string }[] = [
-  { outcome: 'done', title: 'Done', hint: `+${POINTS.done}` },
-  { outcome: 'partial', title: 'Partly', hint: `+${POINTS.partial}` },
-  { outcome: 'failed', title: 'Missed', hint: `+${POINTS.failed}` },
-];
+const SETTABLE: Exclude<Outcome, 'pending'>[] = ['done', 'partial', 'failed'];
 
 function ReportResult({ round, entry }: { round: Round; entry: Entry }) {
   const { gameId, run, patchLocal } = useGame();
+  const { t } = useI18n();
   const [excuse, setExcuse] = useState(entry.excuse);
   useEffect(() => setExcuse(entry.excuse), [entry.excuse]);
   const needsExcuse = entry.outcome === 'failed' || entry.outcome === 'partial';
@@ -466,46 +473,47 @@ function ReportResult({ round, entry }: { round: Round; entry: Entry }) {
     <section className="move">
       <header className="move-header">
         <div>
-          <p className="eyebrow">Your goal this week</p>
+          <p className="eyebrow">{t.round.goalThisWeek}</p>
           <h3 className="move-title move-goal" dir="auto">
-            {entry.goal || 'No goal set'}
+            {entry.goal || t.round.noGoalSet}
           </h3>
         </div>
       </header>
-      <p className="move-step-title">How did it go?</p>
-      <div className="outcome-tiles" role="radiogroup" aria-label="Your result">
+      <p className="move-step-title">{t.round.howDidItGo}</p>
+      <div className="outcome-tiles" role="radiogroup" aria-label={t.round.yourResult}>
         {SETTABLE.map((o) => (
           <button
-            key={o.outcome}
+            key={o}
             type="button"
             role="radio"
-            aria-checked={entry.outcome === o.outcome}
-            className={`outcome-tile is-${o.outcome}`}
-            onClick={() => setOutcome(o.outcome)}
+            aria-checked={entry.outcome === o}
+            className={`outcome-tile is-${o}`}
+            onClick={() => setOutcome(o)}
           >
             <span className="outcome-tile-icon">
-              <Icon name={o.outcome === 'done' ? 'check' : o.outcome === 'partial' ? 'target' : 'x'} size={22} />
+              <Icon name={OUTCOME_ICON[o]} size={22} />
             </span>
-            <span className="outcome-tile-title">{o.title}</span>
-            <span className="outcome-tile-hint">{o.hint} {o.hint === '+1' ? 'pt' : 'pts'}</span>
+            <span className="outcome-tile-title">{t.outcome[o]}</span>
+            <span className="outcome-tile-hint">{t.common.pointsGain(POINTS[o])}</span>
           </button>
         ))}
       </div>
       {needsExcuse && (
         <div className="excuse-box">
           <label className="move-step-title" htmlFor="excuse">
-            Let’s hear the excuse
+            {t.round.excuseTitle}
           </label>
           <AutoTextarea
             id="excuse"
             value={excuse}
             onChange={(e) => setExcuse(e.target.value)}
-            onBlur={() => excuse.trim() !== entry.excuse && run(() => api.updateEntry(gameId, round.id, entry.playerId, { excuse }), 'Saved')}
-            placeholder="What got in the way?"
+            onBlur={() => excuse.trim() !== entry.excuse && run(() => api.updateEntry(gameId, round.id, entry.playerId, { excuse }), t.round.saved)}
+            placeholder={t.round.excusePlaceholder}
             maxLength={1000}
           />
         </div>
       )}
+      <ProofUploader entry={entry} />
       <MyNotes round={round} entry={entry} />
     </section>
   );
@@ -513,6 +521,7 @@ function ReportResult({ round, entry }: { round: Round; entry: Entry }) {
 
 function FinalScore({ entry, entries }: { entry: Entry; entries: Entry[] }) {
   const { lookup } = useGame();
+  const { t } = useI18n();
   const outcomes = outcomesByPlayer(entries);
   const points = entryPoints(entry, outcomes);
   const own = isResolved(entry.outcome) ? POINTS[entry.outcome] : 0;
@@ -524,57 +533,55 @@ function FinalScore({ entry, entries }: { entry: Entry; entries: Entry[] }) {
     <section className="move move-final">
       <div className="final-score">
         <span className="final-points">{points}</span>
-        <span className="final-label">points this round</span>
+        <span className="final-label">{t.round.pointsThisRound}</span>
       </div>
       <ul className="final-breakdown">
         <li>
           <span>
-            Your goal · <OutcomeText outcome={entry.outcome} />
+            {t.round.yourGoalLine} · <span className={`outcome-text is-${entry.outcome}`}>{t.outcome[entry.outcome]}</span>
           </span>
-          <b>+{own}</b>
+          <b dir="ltr">+{own}</b>
         </li>
         <li>
           <span>
-            Excuses from <PickChip id={entry.excusePickId} verdict={call} />
+            {t.round.excusesFrom} <PickChip id={entry.excusePickId} verdict={call} />
           </span>
-          <b>+{call ? POINTS.callHit : 0}</b>
+          <b dir="ltr">+{call ? POINTS.callHit : 0}</b>
         </li>
         <li>
           <span>
-            Delivering <PickChip id={entry.betPickId} verdict={bet} />
+            {t.round.delivering} <PickChip id={entry.betPickId} verdict={bet} />
           </span>
-          <b>+{bet ? POINTS.betHit : 0}</b>
+          <b dir="ltr">+{bet ? POINTS.betHit : 0}</b>
         </li>
       </ul>
+      <ProofUploader entry={entry} />
       <MyNotes round={round} entry={entry} />
     </section>
   );
 }
 
-function OutcomeText({ outcome }: { outcome: Outcome }) {
-  return <span className={`outcome-text is-${outcome}`}>{OUTCOME_LABEL[outcome]}</span>;
-}
-
 function MyNotes({ round, entry }: { round: Round; entry: Entry }) {
   const { gameId, run } = useGame();
+  const { t } = useI18n();
   const [notes, setNotes] = useState(entry.notes);
   const [open, setOpen] = useState(!!entry.notes);
   useEffect(() => setNotes(entry.notes), [entry.notes]);
   if (!open) {
     return (
-      <button className="link-btn" onClick={() => setOpen(true)}>
-        <Icon name="plus" size={14} /> Add a note for future you
+      <button className="link-btn my-notes-toggle" onClick={() => setOpen(true)}>
+        <Icon name="plus" size={14} /> {t.round.addNote}
       </button>
     );
   }
   return (
     <div className="field my-notes">
-      <span className="field-label">Your notes</span>
+      <span className="field-label">{t.round.yourNotes}</span>
       <AutoTextarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
-        onBlur={() => notes.trim() !== entry.notes && run(() => api.updateEntry(gameId, round.id, entry.playerId, { notes }), 'Note saved')}
-        placeholder="What worked, what didn’t, what to try next time"
+        onBlur={() => notes.trim() !== entry.notes && run(() => api.updateEntry(gameId, round.id, entry.playerId, { notes }), t.round.noteSaved)}
+        placeholder={t.round.notesHint}
         autoFocus={!entry.notes}
         maxLength={4000}
       />
@@ -582,135 +589,204 @@ function MyNotes({ round, entry }: { round: Round; entry: Entry }) {
   );
 }
 
-/* ---------- results ---------- */
+/* ---------- the table ---------- */
 
-function RoundResults({ entries }: { entries: Entry[] }) {
-  const { lookup } = useGame();
-  const outcomes = outcomesByPlayer(entries);
-  const scored = entries.map((e) => ({ e, points: entryPoints(e, outcomes) })).sort((a, b) => b.points - a.points);
-  const top = scored[0]?.points ?? 0;
-  const leaders = scored.filter((s) => s.points === top && top > 0);
+/** One line above the table: picks-hidden note while planning, the tally once results come in. */
+function TableSummary({ round, entries }: { round: Round; entries: Entry[] }) {
+  const { t } = useI18n();
+  if (round.status === 'planning') {
+    return (
+      <span className="muted small section-note">
+        <Icon name="eyeOff" size={14} /> {t.round.picksRevealedLater}
+      </span>
+    );
+  }
   const count = (o: Outcome) => entries.filter((e) => e.outcome === o).length;
-
+  if (!entries.some((e) => isResolved(e.outcome))) return null;
   return (
-    <section className="results">
-      <div className="results-stat">
-        <span className="results-num is-done">{count('done')}</span>
-        <span className="results-label">delivered</span>
-      </div>
-      <div className="results-stat">
-        <span className="results-num is-partial">{count('partial')}</span>
-        <span className="results-label">partly</span>
-      </div>
-      <div className="results-stat">
-        <span className="results-num is-failed">{count('failed')}</span>
-        <span className="results-label">missed</span>
-      </div>
-      {leaders.length > 0 && (
-        <div className="results-leader">
-          <span className="results-label">Top score</span>
-          <span className="results-leader-names">
-            {leaders.map(({ e }) => (
-              <Avatar key={e.playerId} id={e.playerId} name={lookup.name(e.playerId)} size={28} ring />
-            ))}
-            <span dir="auto">{leaders.map(({ e }) => lookup.name(e.playerId)).join(', ')}</span>
-            <b>{plural(top, 'pt')}</b>
-          </span>
-        </div>
-      )}
-    </section>
+    <span className="table-tally small">
+      <span className="dot dot-done" /> {count('done')}
+      <span className="dot dot-partial" /> {count('partial')}
+      <span className="dot dot-failed" /> {count('failed')}
+      <span className="sr-only">{t.round.summary(count('done'), count('partial'), count('failed'))}</span>
+    </span>
   );
 }
 
-/* ---------- the table ---------- */
-
-function PlayerCard({ round, entry: e, entries }: { round: Round; entry: Entry; entries: Entry[] }) {
-  const { lookup, gameId } = useGame();
-  const [editing, setEditing] = useState(false);
-  const player = lookup.player.get(e.playerId);
+/** Compact scoreboard: one row per player, details on demand. Sorted by points once scored. */
+function ScoreTable({ round, entries }: { round: Round; entries: Entry[] }) {
   const outcomes = outcomesByPlayer(entries);
-  // The server already hides what this viewer may not see (other accounts' picks during planning).
-  const revealed = !e.hidden;
-  const doubters = entries.filter((x) => x.excusePickId === e.playerId).length;
-  const backers = entries.filter((x) => x.betPickId === e.playerId).length;
-  const verdict = (id: number | null, expected: Outcome) => {
-    const o = id != null ? outcomes.get(id) : undefined;
-    return isResolved(o) ? o === expected : undefined;
-  };
+  const points = new Map(entries.map((e) => [e.playerId, entryPoints(e, outcomes)]));
+  const rows = round.status === 'final' ? [...entries].sort((a, b) => points.get(b.playerId)! - points.get(a.playerId)!) : entries;
+  const top = Math.max(0, ...points.values());
+  const [open, setOpen] = useState<number | null>(null);
 
   return (
-    <article className={`player-card ${player?.isMe ? 'is-me' : ''} outcome-${round.status === 'planning' ? 'none' : e.outcome}`}>
-      <header className="player-card-head">
-        <Link to={`/g/${gameId}/players/${e.playerId}`} className="player-card-who">
-          <Avatar id={e.playerId} name={lookup.name(e.playerId)} size={36} />
-          <span className="player-card-name" dir="auto">
-            {lookup.name(e.playerId)}
+    <ol className={`score-table phase-${round.status}`}>
+      {rows.map((e) => (
+        <TableRow
+          key={e.playerId}
+          round={round}
+          entry={e}
+          entries={entries}
+          points={points.get(e.playerId)!}
+          rank={round.status === 'final' ? rows.findIndex((x) => points.get(x.playerId) === points.get(e.playerId)) + 1 : undefined}
+          leader={round.status === 'final' && top > 0 && points.get(e.playerId) === top}
+          open={open === e.playerId}
+          onToggle={() => setOpen((o) => (o === e.playerId ? null : e.playerId))}
+        />
+      ))}
+    </ol>
+  );
+}
+
+function TableRow(props: {
+  round: Round;
+  entry: Entry;
+  entries: Entry[];
+  points: number;
+  rank?: number;
+  leader: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { round, entry: e, entries, open } = props;
+  const { lookup, gameId } = useGame();
+  const { t } = useI18n();
+  const [editing, setEditing] = useState(false);
+  const player = lookup.player.get(e.playerId);
+  const name = lookup.name(e.playerId);
+  const outcomes = outcomesByPlayer(entries);
+  const scored = round.status !== 'planning';
+  const verdict = (id: number | null, expected: Outcome) => {
+    const o = id != null ? outcomes.get(id) : undefined;
+    return scored && isResolved(o) ? o === expected : undefined;
+  };
+  const doubters = entries.filter((x) => x.excusePickId === e.playerId);
+  const backers = entries.filter((x) => x.betPickId === e.playerId);
+  const detailId = `row-${round.id}-${e.playerId}`;
+
+  return (
+    <li className={`trow outcome-${scored ? e.outcome : 'none'} ${player?.isMe ? 'is-me' : ''} ${open ? 'is-open' : ''}`}>
+      <button type="button" className="trow-main" aria-expanded={open} aria-controls={detailId} onClick={props.onToggle} aria-label={t.round.details(name)}>
+        {props.rank !== undefined && <span className={`trow-rank ${props.leader ? 'is-leader' : ''}`}>{props.leader ? <Icon name="crown" size={15} /> : props.rank}</span>}
+        <Avatar id={e.playerId} name={name} size={36} />
+        <span className="trow-body">
+          <span className="trow-name">
+            <bdi>{name}</bdi>
+            {player?.isMe && <span className="you-tag">{t.common.you}</span>}
+            {e.proofs.length > 0 && (
+              <span className="trow-proof" title={t.round.withProof(e.proofs.length)}>
+                <Icon name="camera" size={13} /> {e.proofs.length}
+              </span>
+            )}
           </span>
-          {player?.isMe && <span className="you-tag">You</span>}
-        </Link>
-        {round.status === 'planning' ? (
-          e.submitted ? (
-            <Pill tone="ink" icon="lock">
-              Locked in
-            </Pill>
+          <span className={`trow-goal ${e.goal ? '' : 'is-empty'}`} dir="auto">
+            {e.goal || t.round.noGoalYet}
+          </span>
+          {e.excuse && scored && (
+            <span className="trow-excuse" dir="auto">
+              {e.excuse}
+            </span>
+          )}
+        </span>
+        <span className="trow-picks">
+          {e.hidden ? (
+            <span className="trow-hidden">
+              <Icon name="eyeOff" size={14} /> {t.round.picksHidden}
+            </span>
           ) : (
-            <Pill icon="clock">Deciding</Pill>
-          )
-        ) : (
-          <OutcomePill outcome={e.outcome} />
-        )}
-      </header>
+            <>
+              <MiniPick kind="call" label={t.round.callShort} id={e.excusePickId} verdict={verdict(e.excusePickId, 'failed')} />
+              <MiniPick kind="bet" label={t.round.betShort} id={e.betPickId} verdict={verdict(e.betPickId, 'done')} />
+            </>
+          )}
+        </span>
+        <span className="trow-end">
+          {round.status === 'planning' ? (
+            e.submitted ? (
+              <Pill tone="ink" icon="lock">
+                {t.round.lockedIn}
+              </Pill>
+            ) : (
+              <Pill icon="clock">{t.round.deciding}</Pill>
+            )
+          ) : round.status === 'final' ? (
+            <span className={`trow-points ${props.leader ? 'is-leader' : ''}`}>{t.common.points(props.points)}</span>
+          ) : (
+            <OutcomePill outcome={e.outcome} />
+          )}
+          <Icon name="chevronDown" size={16} className="trow-chevron" />
+        </span>
+      </button>
 
-      <p className={`player-card-goal ${e.goal ? '' : 'is-empty'}`} dir="auto">
-        {e.goal || 'No goal yet'}
-      </p>
-
-      {e.excuse && round.status !== 'planning' && (
-        <blockquote className="player-card-excuse" dir="auto">
-          {e.excuse}
-        </blockquote>
-      )}
-
-      {revealed ? (
-        <div className="player-card-picks">
-          <div className="pick-row">
-            <span className="pick-label">Excuses from</span>
-            <PickChip id={e.excusePickId} verdict={round.status !== 'planning' ? verdict(e.excusePickId, 'failed') : undefined} />
-          </div>
-          <div className="pick-row">
-            <span className="pick-label">Delivering</span>
-            <PickChip id={e.betPickId} verdict={round.status !== 'planning' ? verdict(e.betPickId, 'done') : undefined} />
+      {open && (
+        <div className="trow-detail" id={detailId}>
+          {round.status === 'final' && (
+            <p className="trow-detail-line">
+              <OutcomePill outcome={e.outcome} />
+            </p>
+          )}
+          {!e.hidden && (e.excuseReason || e.betReason) && (
+            <dl className="trow-reasons">
+              {e.excusePickId != null && e.excuseReason && (
+                <div>
+                  <dt>
+                    {t.round.callShort} · <bdi>{lookup.name(e.excusePickId)}</bdi>
+                  </dt>
+                  <dd dir="auto">{e.excuseReason}</dd>
+                </div>
+              )}
+              {e.betPickId != null && e.betReason && (
+                <div>
+                  <dt>
+                    {t.round.betShort} · <bdi>{lookup.name(e.betPickId)}</bdi>
+                  </dt>
+                  <dd dir="auto">{e.betReason}</dd>
+                </div>
+              )}
+            </dl>
+          )}
+          {scored && (doubters.length > 0 || backers.length > 0) && (
+            <p className="trow-detail-line muted small">{t.round.doubtedBacked(doubters.length, backers.length)}</p>
+          )}
+          {e.proofs.length > 0 && <ProofStrip entry={e} max={6} />}
+          <div className="trow-actions">
+            <Link to={`/g/${gameId}/players/${e.playerId}`} className="btn btn-ghost btn-sm">
+              {t.round.profile}
+              <Icon name="chevronRight" size={14} />
+            </Link>
+            {lookup.isAdmin && (
+              <Button size="sm" icon="edit" onClick={() => setEditing(true)} aria-label={t.round.editEntry(name)}>
+                {t.round.edit}
+              </Button>
+            )}
           </div>
         </div>
-      ) : (
-        <div className="player-card-hidden">
-          <Icon name="eyeOff" size={15} /> Picks hidden
-        </div>
       )}
-
-      <footer className="player-card-foot">
-        {round.status !== 'planning' ? (
-          <span className="muted small">
-            Doubted by {doubters} · Backed by {backers}
-          </span>
-        ) : (
-          <span />
-        )}
-        {round.status === 'final' && <span className="player-card-points">{plural(entryPoints(e, outcomes), 'pt')}</span>}
-        {lookup.isAdmin && (
-          <button className="icon-btn icon-btn-sm" onClick={() => setEditing(true)} aria-label={`Edit ${lookup.name(e.playerId)}’s entry`}>
-            <Icon name="edit" size={15} />
-          </button>
-        )}
-      </footer>
 
       {editing && <AdminEntryModal round={round} entry={e} onClose={() => setEditing(false)} />}
-    </article>
+    </li>
+  );
+}
+
+/** "Excuses → Name ✓" in a tinted chip; green when it came true, struck through when it didn’t. */
+function MiniPick({ kind, label, id, verdict }: { kind: 'call' | 'bet'; label: string; id: number | null; verdict?: boolean }) {
+  const { lookup } = useGame();
+  const { t } = useI18n();
+  const state = verdict === undefined ? '' : verdict ? 'is-right' : 'is-wrong';
+  return (
+    <span className={`mini-pick mini-${kind} ${state}`} title={verdict === undefined ? undefined : verdict ? t.round.calledIt : t.round.wrongCall}>
+      <span className="mini-pick-label">{label}</span>
+      {id == null ? <span className="muted">—</span> : <bdi className="mini-pick-name">{lookup.name(id)}</bdi>}
+      {verdict !== undefined && <Icon name={verdict ? 'check' : 'x'} size={12} />}
+    </span>
   );
 }
 
 function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry; onClose: () => void }) {
   const { gameId, run, lookup } = useGame();
+  const { t } = useI18n();
   const player = lookup.player.get(entry.playerId);
   const isGuest = !player?.hasAccount;
   // Before the reveal, an account's picks are theirs alone. Guests' picks are entered by the admin.
@@ -733,73 +809,72 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
       ...(canPick ? { excusePickId, betPickId } : {}),
       ...(round.status === 'planning' ? (isGuest ? { submitted: !!goal.trim() } : {}) : { outcome, excuse }),
     };
-    const ok = await run(() => api.updateEntry(gameId, round.id, entry.playerId, patch), 'Saved');
+    const ok = await run(() => api.updateEntry(gameId, round.id, entry.playerId, patch), t.round.saved);
     setBusy(false);
     if (ok !== undefined) onClose();
   };
 
   const remove = async () => {
-    await run(() => api.removeEntry(gameId, round.id, entry.playerId), `${name} removed from the round`);
+    await run(() => api.removeEntry(gameId, round.id, entry.playerId), t.round.removedFromRound(name));
     onClose();
   };
 
   return (
     <Modal
-      title={`Edit ${name}’s entry`}
+      title={t.round.editEntry(name)}
       onClose={onClose}
       footer={
         <>
           <Button variant="ghost" className="mr-auto" onClick={remove}>
-            Remove from round
+            {t.round.removeFromRound}
           </Button>
           <Button variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button variant="primary" loading={busy} onClick={save}>
-            Save
+            {t.common.save}
           </Button>
         </>
       }
     >
-      {isGuest && round.status === 'planning' && (
-        <p className="muted small modal-note">{name} is a guest without an account, so you play their move for them.</p>
-      )}
+      {isGuest && round.status === 'planning' && <p className="muted small modal-note">{t.round.guestMove(name)}</p>}
       <label className="field">
-        <span className="field-label">Goal</span>
+        <span className="field-label">{t.round.goalLabel}</span>
         <AutoTextarea value={goal} onChange={(e) => setGoal(e.target.value)} />
       </label>
       {canPick ? (
         <>
           <div className="field">
-            <span className="field-label">Excuses from</span>
-            <PlayerPicker tone="call" label="Excuses from" players={others} value={excusePickId} onChange={setExcusePick} />
+            <span className="field-label">{t.round.excusesFrom}</span>
+            <PlayerPicker tone="call" label={t.round.excusesFrom} players={others} value={excusePickId} onChange={setExcusePick} />
           </div>
           <div className="field">
-            <span className="field-label">Delivering</span>
-            <PlayerPicker tone="bet" label="Delivering" players={others} value={betPickId} onChange={setBetPick} />
+            <span className="field-label">{t.round.delivering}</span>
+            <PlayerPicker tone="bet" label={t.round.delivering} players={others} value={betPickId} onChange={setBetPick} />
           </div>
         </>
       ) : (
         <p className="muted small modal-note">
-          <Icon name="eyeOff" size={14} /> {name}’s picks stay private until the week starts — even from admins.
+          <Icon name="eyeOff" size={14} /> {t.round.picksPrivate(name)}
         </p>
       )}
       {round.status !== 'planning' && (
         <>
           <div className="field">
-            <span className="field-label">Result</span>
+            <span className="field-label">{t.round.result}</span>
             <div className="segmented">
               {(['pending', 'done', 'partial', 'failed'] as Outcome[]).map((o) => (
                 <button key={o} type="button" className={`segment ${outcome === o ? 'is-on' : ''} is-${o}`} onClick={() => setOutcome(o)}>
-                  {OUTCOME_LABEL[o]}
+                  {t.outcome[o]}
                 </button>
               ))}
             </div>
           </div>
           <label className="field">
-            <span className="field-label">Excuse</span>
+            <span className="field-label">{t.round.excuse}</span>
             <AutoTextarea value={excuse} onChange={(e) => setExcuse(e.target.value)} />
           </label>
+          <ProofUploader entry={entry} />
         </>
       )}
     </Modal>
@@ -808,17 +883,18 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
 
 function RoundNotes({ round }: { round: Round }) {
   const { gameId, run } = useGame();
+  const { t } = useI18n();
   const [notes, setNotes] = useState(round.notes);
   useEffect(() => setNotes(round.notes), [round.notes]);
   return (
     <section className="section">
-      <h3 className="section-title">Round notes</h3>
+      <h3 className="section-title">{t.round.notes}</h3>
       <AutoTextarea
         className="notes-input"
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
-        onBlur={() => notes.trim() !== round.notes && run(() => api.updateRound(gameId, round.id, { notes }), 'Notes saved')}
-        placeholder="Anything the group should remember about this week. Everyone can edit this."
+        onBlur={() => notes.trim() !== round.notes && run(() => api.updateRound(gameId, round.id, { notes }), t.round.notesSaved)}
+        placeholder={t.round.notesPlaceholder}
         maxLength={8000}
       />
     </section>

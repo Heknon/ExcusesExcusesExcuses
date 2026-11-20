@@ -4,7 +4,10 @@ import { extname, join, normalize, resolve } from 'node:path';
 import type { User } from '../shared/types.ts';
 import { authService, SESSION_COOKIE, SESSION_DAYS } from './auth.ts';
 import { HttpError, openPool, type Pool } from './db.ts';
-import { gameService } from './games.ts';
+import { gameService, PROOF_MAX_BYTES } from './games.ts';
+
+const PROOF_UPLOAD = /^\/api\/games\/(\d+)\/rounds\/(\d+)\/entries\/(\d+)\/proofs$/;
+const PROOF_GET = /^\/api\/proofs\/(\d+)$/;
 
 const STATIC_DIR = resolve('dist');
 
@@ -24,19 +27,26 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
   res.end(JSON.stringify(body ?? { ok: true }));
 }
 
-async function readJson(req: IncomingMessage): Promise<any> {
+async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+  const declared = Number(req.headers['content-length'] ?? 0);
+  if (declared > limit) throw new HttpError(413, 'request_too_large');
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const c of req) {
     size += c.length;
-    if (size > 1_000_000) throw new HttpError(413, 'Request too large');
+    if (size > limit) throw new HttpError(413, 'request_too_large');
     chunks.push(c);
   }
-  if (!chunks.length) return {};
+  return Buffer.concat(chunks);
+}
+
+async function readJson(req: IncomingMessage): Promise<any> {
+  const raw = await readBody(req, 1_000_000);
+  if (!raw.length) return {};
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return JSON.parse(raw.toString('utf8'));
   } catch {
-    throw new HttpError(400, 'Invalid JSON');
+    throw new HttpError(400, 'invalid_json');
   }
 }
 
@@ -94,6 +104,7 @@ export function createApp(pool: Pool) {
       /^\/api\/games\/(\d+)\/rounds\/(\d+)\/entries\/(\d+)$/,
       async ({ user, params: [g, r, p], body }) => games.updateEntry(user.id, g, r, p, body),
     ],
+    ['DELETE', /^\/api\/proofs\/(\d+)$/, async ({ user, params: [id] }) => games.deleteProof(user.id, id)],
     [
       'DELETE',
       /^\/api\/games\/(\d+)\/rounds\/(\d+)\/entries\/(\d+)$/,
@@ -124,12 +135,41 @@ export function createApp(pool: Pool) {
 
     try {
       const method = req.method ?? 'GET';
-      // Writes must be JSON: browsers can't send that cross-site without a CORS preflight, which we never allow.
+      const user = await auth.userForToken(cookies(req)[SESSION_COOKIE]);
+
+      // Binary routes: proof photos.
+      const upload = url.pathname.match(PROOF_UPLOAD);
+      if (upload && method === 'POST') {
+        // Only image types are accepted: like JSON, browsers can't send them cross-site without a preflight.
+        if (!String(req.headers['content-type'] ?? '').startsWith('image/')) throw new HttpError(415, 'proof_not_image');
+        if (!user) throw new HttpError(401, 'sign_in');
+        const bytes = await readBody(req, PROOF_MAX_BYTES).catch((err) => {
+          throw err instanceof HttpError && err.code === 'request_too_large' ? new HttpError(413, 'proof_too_large') : err;
+        });
+        const [g, r, p] = upload.slice(1).map(Number);
+        return send(res, 200, await games.addProof(user, g, r, p, bytes));
+      }
+      const download = url.pathname.match(PROOF_GET);
+      if (download && method === 'GET') {
+        if (!user) throw new HttpError(401, 'sign_in');
+        const proof = await games.proof(user.id, Number(download[1]));
+        res.writeHead(200, {
+          'content-type': proof.mime,
+          'content-length': proof.bytes.length,
+          // Proof ids never change content, so the browser can keep them; never shared caches.
+          'cache-control': 'private, max-age=31536000, immutable',
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'",
+          'content-disposition': 'inline',
+        });
+        return res.end(proof.bytes);
+      }
+
+      // Everything else: writes must be JSON, which browsers can't send cross-site without a CORS preflight.
       if (method !== 'GET' && !String(req.headers['content-type'] ?? '').startsWith('application/json')) {
-        throw new HttpError(415, 'Expected application/json');
+        throw new HttpError(415, 'unsupported_type');
       }
       const body = method === 'GET' ? {} : await readJson(req);
-      const user = await auth.userForToken(cookies(req)[SESSION_COOKIE]);
       const base = { req, user, body, query: url.searchParams };
 
       for (const [m, re, handler] of publicRoutes) {
@@ -144,14 +184,14 @@ export function createApp(pool: Pool) {
       for (const [m, re, handler] of routes) {
         const match = url.pathname.match(re);
         if (!match || m !== method) continue;
-        if (!user) throw new HttpError(401, 'Sign in to continue');
+        if (!user) throw new HttpError(401, 'sign_in');
         return send(res, 200, await handler({ ...base, user, params: match.slice(1).map(Number) }));
       }
-      throw new HttpError(404, 'Not found');
+      throw new HttpError(404, 'not_found');
     } catch (err) {
-      if (err instanceof HttpError) return send(res, err.status, { error: err.message });
+      if (err instanceof HttpError) return send(res, err.status, { error: err.message, code: err.code });
       console.error(err);
-      return send(res, 500, { error: 'Something went wrong' });
+      return send(res, 500, { error: 'Something went wrong', code: 'server_error' });
     }
   });
 }

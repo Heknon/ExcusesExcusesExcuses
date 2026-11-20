@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ApiError, api } from '../api.ts';
-import { plural } from '../format.ts';
+import { api } from '../api.ts';
+import { useI18n } from '../i18n.tsx';
 import { Link, navigate } from '../router.tsx';
 import { useSession } from '../session.tsx';
 import { Button, Icon, Spinner } from '../ui.tsx';
@@ -9,12 +9,13 @@ type Invite = Awaited<ReturnType<typeof api.lookupInvite>>;
 
 export function JoinPage({ code }: { code: string }) {
   const { refresh } = useSession();
+  const { t, errorText } = useI18n();
   const [invite, setInvite] = useState<Invite | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.lookupInvite(code).then(setInvite, (e: ApiError) => setError(e.message));
+    api.lookupInvite(code).then(setInvite, setError);
   }, [code]);
 
   const join = async () => {
@@ -25,7 +26,7 @@ export function JoinPage({ code }: { code: string }) {
       if (r.status === 'active') navigate(`/g/${r.id}`, { replace: true });
       else setInvite((i) => i && { ...i, status: 'pending' });
     } catch (e) {
-      setError((e as Error).message);
+      setError(e);
     }
     setBusy(false);
   };
@@ -37,10 +38,12 @@ export function JoinPage({ code }: { code: string }) {
           <span className="join-icon is-error">
             <Icon name="x" size={24} />
           </span>
-          <h1>Invite not found</h1>
-          <p className="muted">{error}. Check the code with whoever sent it — admins can reset codes.</p>
+          <h1>{t.join.notFoundTitle}</h1>
+          <p className="muted">
+            {errorText(error)}. {t.join.notFoundBody}
+          </p>
           <Link to="/" className="btn btn-secondary btn-md">
-            Back to your games
+            {t.common.yourGames}
           </Link>
         </div>
       </div>
@@ -51,34 +54,34 @@ export function JoinPage({ code }: { code: string }) {
   return (
     <div className="page page-narrow">
       <div className="join-card">
-        <p className="eyebrow">You’re invited to</p>
+        <p className="eyebrow">{t.join.invitedTo}</p>
         <h1 className="display" dir="auto">
           {invite.name}
         </h1>
-        <p className="muted">{plural(invite.players, 'player')} so far</p>
+        <p className="muted">{t.join.soFar(invite.players)}</p>
 
         {invite.status === 'active' ? (
           <Button variant="primary" size="lg" onClick={() => navigate(`/g/${invite.id}`)}>
-            You’re in — open the game
+            {t.join.openGame}
           </Button>
         ) : invite.status === 'pending' ? (
           <div className="join-waiting">
             <Icon name="clock" />
             <div>
-              <b>Request sent.</b>
-              <p className="muted">An admin will let you in. The game will show up on your home screen once they do.</p>
+              <b>{t.join.sentTitle}</b>
+              <p className="muted">{t.join.sentBody}</p>
             </div>
           </div>
         ) : (
           <>
             <Button variant="primary" size="lg" loading={busy} onClick={join}>
-              Ask to join
+              {t.join.ask}
             </Button>
-            <p className="muted small">The game’s admin approves every new player.</p>
+            <p className="muted small">{t.join.askHint}</p>
           </>
         )}
         <Link to="/" className="join-back">
-          <Icon name="chevronLeft" size={16} /> Your games
+          <Icon name="chevronLeft" size={16} /> {t.common.yourGames}
         </Link>
       </div>
     </div>

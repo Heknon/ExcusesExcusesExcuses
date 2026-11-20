@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, api, onSignedOut } from './api.ts';
 import type { Entry, GameState, Me, Player, Round } from '../shared/types.ts';
+import { useI18n } from './i18n.tsx';
 import { useToast } from './ui.tsx';
 
 /* ---------- session ---------- */
@@ -91,7 +92,7 @@ function buildLookup(s: GameState): GameLookup {
   };
   return {
     player,
-    name: (id) => (id == null ? '' : player.get(id)?.name ?? 'Former player'),
+    name: (id) => (id == null ? '' : player.get(id)?.name ?? '—'),
     active: s.players.filter((p) => p.status === 'active'),
     pending: s.players.filter((p) => p.status === 'pending'),
     me: player.get(s.me.playerId)!,
@@ -121,6 +122,7 @@ export function useGameStore(gameId: number): GameStore {
   const [error, setError] = useState<ApiError | null>(null);
   const writes = useRef(0);
   const toast = useToast();
+  const { errorText } = useI18n();
   const { refresh } = useSession();
 
   const reload = useCallback(async () => {
@@ -151,7 +153,7 @@ export function useGameStore(gameId: number): GameStore {
         if (success) toast(success);
         return out;
       } catch (e) {
-        toast((e as Error).message, 'error');
+        toast(errorText(e), 'error');
         return undefined;
       } finally {
         writes.current--;
@@ -159,7 +161,7 @@ export function useGameStore(gameId: number): GameStore {
         refresh(); // keep the home screen's to-dos in sync
       }
     },
-    [reload, refresh, toast],
+    [reload, refresh, toast, errorText],
   );
 
   const lookup = useMemo(() => (state ? buildLookup(state) : null), [state]);

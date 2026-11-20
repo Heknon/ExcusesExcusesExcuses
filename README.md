@@ -25,6 +25,13 @@ group reads each other.
 - **History:** every round stays browsable. Each player has a profile with their full record: goals,
   outcomes, excuses, notes, and who doubted or backed them and why. Search covers everything.
 - **Standings:** points, delivery rate, how often your reads are right, streaks, and a round-by-round grid.
+- **Proof:** once the week starts, players can attach up to 6 photos to their entry (optional). Photos are
+  shrunk and re-encoded to JPEG on the phone before upload, which also strips location metadata. The server
+  checks the file is really an image and only serves it to players in the same game.
+- **English and Hebrew:** full right-to-left layout in Hebrew, with Heebo for text and Rubik for headings.
+  The language follows the browser until you pick one; the choice is saved to your account.
+- **Phones first:** on small screens the game tabs move to a bottom navigation bar and dialogs open as
+  bottom sheets.
 - **WhatsApp import:** admins can paste a round posted in the group (`*ביצועים*`, `*מי תירוצים*`,
   `*מי יהיה ביצועים (הימורים)*`) to bring in past rounds. New names become guests.
 

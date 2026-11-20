@@ -1,7 +1,7 @@
 import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { HttpError, type Pool } from './db.ts';
-import type { User } from '../shared/types.ts';
+import { LOCALES, type Locale, type User } from '../shared/types.ts';
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 
@@ -30,10 +30,10 @@ function validate(input: { email?: unknown; password?: unknown; name?: unknown }
   const email = String(input.email ?? '').trim().toLowerCase();
   const password = String(input.password ?? '');
   const name = String(input.name ?? '').trim();
-  if (!EMAIL.test(email)) throw new HttpError(400, 'Enter a valid email address');
-  if (needName && !name) throw new HttpError(400, 'Enter your name');
-  if (needName && name.length > 40) throw new HttpError(400, 'Name is too long');
-  if (password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters');
+  if (!EMAIL.test(email)) throw new HttpError(400, 'invalid_email');
+  if (needName && !name) throw new HttpError(400, 'name_required');
+  if (needName && name.length > 40) throw new HttpError(400, 'name_too_long');
+  if (password.length < 8) throw new HttpError(400, 'password_too_short');
   return { email, password, name };
 }
 
@@ -41,7 +41,7 @@ function validate(input: { email?: unknown; password?: unknown; name?: unknown }
 const failures = new Map<string, { count: number; until: number }>();
 function checkThrottle(email: string) {
   const f = failures.get(email);
-  if (f && f.until > Date.now() && f.count >= 10) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.');
+  if (f && f.until > Date.now() && f.count >= 10) throw new HttpError(429, 'too_many_attempts');
 }
 function recordFailure(email: string) {
   const f = failures.get(email);
@@ -49,7 +49,7 @@ function recordFailure(email: string) {
   failures.set(email, { count: fresh ? 1 : f.count + 1, until: fresh ? Date.now() + 15 * 60_000 : f.until });
 }
 
-const toUser = (r: any): User => ({ id: r.id, email: r.email, name: r.name });
+const toUser = (r: any): User => ({ id: r.id, email: r.email, name: r.name, locale: r.locale ?? null });
 
 export function authService(pool: Pool) {
   async function createSession(userId: number): Promise<string> {
@@ -62,13 +62,14 @@ export function authService(pool: Pool) {
   }
 
   return {
-    async signup(input: { email?: unknown; password?: unknown; name?: unknown }) {
+    async signup(input: { email?: unknown; password?: unknown; name?: unknown; locale?: unknown }) {
       const { email, password, name } = validate(input, true);
+      const locale = LOCALES.includes(input.locale as Locale) ? (input.locale as Locale) : null;
       const hash = await hashPassword(password);
       const { rows } = await pool
-        .query('INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING *', [email, name, hash])
+        .query('INSERT INTO users (email, name, password_hash, locale) VALUES ($1, $2, $3, $4) RETURNING *', [email, name, hash, locale])
         .catch((err) => {
-          if (err?.code === '23505') throw new HttpError(409, 'An account with this email already exists');
+          if (err?.code === '23505') throw new HttpError(409, 'email_taken');
           throw err;
         });
       const user = toUser(rows[0]);
@@ -83,7 +84,7 @@ export function authService(pool: Pool) {
       const ok = rows[0] && (await verifyPassword(password, rows[0].password_hash));
       if (!ok) {
         recordFailure(email);
-        throw new HttpError(401, 'Wrong email or password');
+        throw new HttpError(401, 'wrong_credentials');
       }
       failures.delete(email);
       const user = toUser(rows[0]);
@@ -103,10 +104,18 @@ export function authService(pool: Pool) {
       return rows[0] ? toUser(rows[0]) : null;
     },
 
-    async updateProfile(userId: number, input: { name?: unknown }) {
-      const name = String(input.name ?? '').trim();
-      if (!name || name.length > 40) throw new HttpError(400, 'Enter a name up to 40 characters');
-      const { rows } = await pool.query('UPDATE users SET name = $2 WHERE id = $1 RETURNING *', [userId, name]);
+    async updateProfile(userId: number, input: { name?: unknown; locale?: unknown }) {
+      let name: string | null = null;
+      if (input.name !== undefined) {
+        name = String(input.name ?? '').trim();
+        if (!name) throw new HttpError(400, 'name_required');
+        if (name.length > 40) throw new HttpError(400, 'name_too_long');
+      }
+      if (input.locale !== undefined && !LOCALES.includes(input.locale as Locale)) throw new HttpError(400, 'invalid_locale');
+      const { rows } = await pool.query(
+        'UPDATE users SET name = COALESCE($2, name), locale = COALESCE($3, locale) WHERE id = $1 RETURNING *',
+        [userId, name, (input.locale as string | undefined) ?? null],
+      );
       return toUser(rows[0]);
     },
   };

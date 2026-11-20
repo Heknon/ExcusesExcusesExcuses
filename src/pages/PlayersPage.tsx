@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from 'react';
 import type { Player } from '../../shared/types.ts';
 import { api } from '../api.ts';
+import { useI18n } from '../i18n.tsx';
 import { Link } from '../router.tsx';
 import { useGame } from '../session.tsx';
 import { Avatar, Button, Icon, Modal, Pill, useCopy } from '../ui.tsx';
 
 export function PlayersPage() {
   const { lookup, state } = useGame();
+  const { t } = useI18n();
   const removed = state.players.filter((p) => p.status === 'removed');
 
   return (
@@ -16,7 +18,7 @@ export function PlayersPage() {
 
       <section className="section">
         <div className="section-head">
-          <h3 className="section-title">At the table · {lookup.active.length}</h3>
+          <h3 className="section-title">{t.players.atTable(lookup.active.length)}</h3>
           {lookup.isAdmin && <AddGuest />}
         </div>
         <ul className="roster">
@@ -28,7 +30,7 @@ export function PlayersPage() {
 
       {removed.length > 0 && (
         <details className="section removed">
-          <summary className="section-title">Former players · {removed.length}</summary>
+          <summary className="section-title">{t.players.former(removed.length)}</summary>
           <ul className="roster">
             {removed.map((p) => (
               <RosterRow key={p.id} player={p} />
@@ -42,21 +44,22 @@ export function PlayersPage() {
 
 function InvitePanel() {
   const { state } = useGame();
+  const { t } = useI18n();
   const copy = useCopy();
   const code = state.game.inviteCode!;
   const url = `${location.origin}/join/${code}`;
   return (
     <section className="invite">
       <div className="invite-text">
-        <h3>Invite your group</h3>
-        <p className="muted">Anyone with the link can ask to join. You approve each request.</p>
+        <h3>{t.players.inviteTitle}</h3>
+        <p className="muted">{t.players.inviteText}</p>
       </div>
       <div className="invite-actions">
-        <button className="invite-code" onClick={() => copy(code, 'Code copied')} title="Copy code">
+        <button className="invite-code" dir="ltr" onClick={() => copy(code, t.players.codeCopied)} title={t.players.copyCode}>
           {code}
         </button>
-        <Button variant="primary" icon="link" onClick={() => copy(url, 'Invite link copied')}>
-          Copy link
+        <Button variant="primary" icon="link" onClick={() => copy(url, t.game.inviteCopied)}>
+          {t.players.copyLink}
         </Button>
       </div>
     </section>
@@ -65,13 +68,14 @@ function InvitePanel() {
 
 function JoinRequests() {
   const { lookup, gameId, run } = useGame();
+  const { t } = useI18n();
   const guests = lookup.active.filter((p) => !p.hasAccount);
   const [linking, setLinking] = useState<Player | null>(null);
 
   return (
     <section className="section requests">
       <h3 className="section-title">
-        Join requests <span className="badge">{lookup.pending.length}</span>
+        {t.players.requests} <span className="badge">{lookup.pending.length}</span>
       </h3>
       <ul className="roster">
         {lookup.pending.map((p) => (
@@ -81,19 +85,21 @@ function JoinRequests() {
               <span className="roster-name" dir="auto">
                 {p.name}
               </span>
-              <span className="muted small">{p.email}</span>
+              <span className="muted small" dir="ltr">
+                {p.email}
+              </span>
             </span>
             <span className="roster-actions">
-              <Button size="sm" variant="ghost" onClick={() => run(() => api.playerAction(gameId, p.id, { action: 'reject' }), 'Request declined')}>
-                Decline
+              <Button size="sm" variant="ghost" onClick={() => run(() => api.playerAction(gameId, p.id, { action: 'reject' }), t.players.declined)}>
+                {t.players.decline}
               </Button>
               {guests.length > 0 && (
                 <Button size="sm" onClick={() => setLinking(p)}>
-                  Is a guest…
+                  {t.players.isGuest}
                 </Button>
               )}
-              <Button size="sm" variant="primary" icon="check" onClick={() => run(() => api.playerAction(gameId, p.id, { action: 'approve' }), `${p.name} joined`)}>
-                Let in
+              <Button size="sm" variant="primary" icon="check" onClick={() => run(() => api.playerAction(gameId, p.id, { action: 'approve' }), t.players.joined(p.name))}>
+                {t.players.letIn}
               </Button>
             </span>
           </li>
@@ -106,28 +112,29 @@ function JoinRequests() {
 
 function LinkGuestModal({ request, guests, onClose }: { request: Player; guests: Player[]; onClose: () => void }) {
   const { gameId, run } = useGame();
+  const { t } = useI18n();
   const [guestId, setGuestId] = useState<number | null>(null);
   const approve = async () => {
     if (guestId == null) return;
-    const ok = await run(() => api.playerAction(gameId, request.id, { action: 'approve', guestId }), `${request.name} took over their seat`);
+    const ok = await run(() => api.playerAction(gameId, request.id, { action: 'approve', guestId }), t.players.linked(request.name));
     if (ok) onClose();
   };
   return (
     <Modal
-      title={`Is ${request.name} one of your guests?`}
+      title={t.players.linkTitle(request.name)}
       onClose={onClose}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button variant="primary" disabled={guestId == null} onClick={approve}>
-            Let in as this guest
+            {t.players.linkCta}
           </Button>
         </>
       }
     >
-      <p className="muted">Their account takes over the guest’s seat, including every past goal, pick and result.</p>
+      <p className="muted">{t.players.linkBody}</p>
       <div className="choice-list">
         {guests.map((g) => (
           <label key={g.id} className={`choice ${guestId === g.id ? 'is-on' : ''}`}>
@@ -143,12 +150,13 @@ function LinkGuestModal({ request, guests, onClose }: { request: Player; guests:
 
 function AddGuest() {
   const { gameId, run } = useGame();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
     if (!name.trim()) return;
-    const ok = await run(() => api.addGuest(gameId, name.trim()), `${name.trim()} added as a guest`);
+    const ok = await run(() => api.addGuest(gameId, name.trim()), t.players.guestAdded(name.trim()));
     if (ok) {
       setName('');
       setOpen(false);
@@ -157,30 +165,28 @@ function AddGuest() {
   return (
     <>
       <Button size="sm" icon="plus" onClick={() => setOpen(true)}>
-        Add guest
+        {t.players.addGuest}
       </Button>
       {open && (
         <Modal
-          title="Add a guest player"
+          title={t.players.addGuestTitle}
           onClose={() => setOpen(false)}
           footer={
             <>
               <Button variant="ghost" onClick={() => setOpen(false)}>
-                Cancel
+                {t.common.cancel}
               </Button>
               <Button variant="primary" disabled={!name.trim()} onClick={() => submit()}>
-                Add guest
+                {t.players.addGuest}
               </Button>
             </>
           }
         >
           <form onSubmit={submit}>
             <label className="field">
-              <span className="field-label">Name</span>
+              <span className="field-label">{t.players.guestName}</span>
               <input className="input" dir="auto" value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={40} />
-              <span className="field-hint">
-                For someone who hasn’t signed up yet. You can enter their moves for them, and when they join you can hand them the seat with all its history.
-              </span>
+              <span className="field-hint">{t.players.guestHint}</span>
             </label>
           </form>
         </Modal>
@@ -191,6 +197,7 @@ function AddGuest() {
 
 function RosterRow({ player: p }: { player: Player }) {
   const { lookup, gameId, run } = useGame();
+  const { t } = useI18n();
   const [menu, setMenu] = useState(false);
   const act = (input: Parameters<typeof api.playerAction>[2], msg: string) => {
     setMenu(false);
@@ -204,53 +211,53 @@ function RosterRow({ player: p }: { player: Player }) {
         <span className="roster-main">
           <span className="roster-name" dir="auto">
             {p.name}
-            {p.isMe && <span className="you-tag">You</span>}
+            {p.isMe && <span className="you-tag">{t.common.you}</span>}
           </span>
           <span className="roster-tags">
-            {p.role === 'admin' && <Pill icon="crown">Admin</Pill>}
-            {!p.hasAccount && <Pill>Guest</Pill>}
+            {p.role === 'admin' && <Pill icon="crown">{t.common.admin}</Pill>}
+            {!p.hasAccount && <Pill>{t.common.guest}</Pill>}
           </span>
         </span>
       </Link>
       {lookup.isAdmin && !p.isMe && (
         <span className="roster-menu">
-          <button className="icon-btn" aria-label={`Manage ${p.name}`} aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
+          <button className="icon-btn" aria-label={t.players.manage(p.name)} aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
             <Icon name="chevronDown" />
           </button>
           {menu && (
             <span className="menu" role="menu" onMouseLeave={() => setMenu(false)}>
               {p.status === 'removed' ? (
-                <button role="menuitem" onClick={() => act({ action: 'restore' }, `${p.name} is back`)}>
-                  Bring back
+                <button role="menuitem" onClick={() => act({ action: 'restore' }, t.players.back(p.name))}>
+                  {t.players.bringBack}
                 </button>
               ) : (
                 <>
                   {p.hasAccount && p.role === 'player' && (
-                    <button role="menuitem" onClick={() => act({ action: 'update', role: 'admin' }, `${p.name} is now an admin`)}>
-                      Make admin
+                    <button role="menuitem" onClick={() => act({ action: 'update', role: 'admin' }, t.players.madeAdmin(p.name))}>
+                      {t.players.makeAdmin}
                     </button>
                   )}
                   {p.role === 'admin' && (
-                    <button role="menuitem" onClick={() => act({ action: 'update', role: 'player' }, `${p.name} is no longer an admin`)}>
-                      Remove admin
+                    <button role="menuitem" onClick={() => act({ action: 'update', role: 'player' }, t.players.removedAdmin(p.name))}>
+                      {t.players.removeAdmin}
                     </button>
                   )}
                   <button
                     role="menuitem"
                     onClick={() => {
-                      const name = prompt('Rename player', p.name);
-                      if (name?.trim()) act({ action: 'update', name: name.trim() }, 'Renamed');
+                      const name = prompt(t.players.renamePrompt, p.name);
+                      if (name?.trim()) act({ action: 'update', name: name.trim() }, t.players.renamed);
                       else setMenu(false);
                     }}
                   >
-                    Rename
+                    {t.players.rename}
                   </button>
                   <button
                     role="menuitem"
                     className="danger"
-                    onClick={() => confirm(`Remove ${p.name} from the game? Their history stays.`) && act({ action: 'remove' }, `${p.name} removed`)}
+                    onClick={() => confirm(t.players.removeConfirm(p.name)) && act({ action: 'remove' }, t.players.removed(p.name))}
                   >
-                    Remove from game
+                    {t.players.remove}
                   </button>
                 </>
               )}

@@ -13,10 +13,20 @@ export const ROUND_STATUSES: readonly RoundStatus[] = ['planning', 'live', 'fina
 export type Role = 'admin' | 'player';
 export type PlayerStatus = 'pending' | 'active' | 'removed';
 
+export type Locale = 'en' | 'he';
+export const LOCALES: readonly Locale[] = ['en', 'he'];
+
 export interface User {
   id: number;
   email: string;
   name: string;
+  /** Null until the user picks a language; the client then follows the browser. */
+  locale: Locale | null;
+}
+
+export interface Proof {
+  id: number;
+  createdAt: string;
 }
 
 export interface Game {
@@ -66,6 +76,8 @@ export interface Entry {
   submitted: boolean;
   /** Calls and bets are hidden from other players while the round is in planning. */
   hidden: boolean;
+  /** Photos attached as proof, oldest first. */
+  proofs: Proof[];
 }
 
 export type EntryPatch = Partial<
@@ -112,5 +124,6 @@ export function emptyEntry(roundId: number, playerId: number): Entry {
     betReason: '',
     submitted: false,
     hidden: false,
+    proofs: [],
   };
 }

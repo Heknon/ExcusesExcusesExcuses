@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { api } from '../api.ts';
+import { useI18n } from '../i18n.tsx';
 import { Link, navigate, type GameTab, type Route } from '../router.tsx';
 import { GameProvider, useGame, useGameStore, useSession } from '../session.tsx';
 import { AvatarStack, Button, EmptyState, Icon, Spinner, useCopy, type IconName } from '../ui.tsx';
@@ -13,6 +14,7 @@ import { StandingsPage } from './StandingsPage.tsx';
 export function GamePage({ route }: { route: Extract<Route, { name: 'game' }> }) {
   const store = useGameStore(route.gameId);
   const { refresh } = useSession();
+  const { t } = useI18n();
 
   if (store.error) {
     const waiting = store.error.status === 403;
@@ -20,7 +22,7 @@ export function GamePage({ route }: { route: Extract<Route, { name: 'game' }> })
       <div className="page page-narrow">
         <EmptyState
           icon={waiting ? 'clock' : 'x'}
-          title={waiting ? 'Waiting for the admin' : 'Game not found'}
+          title={waiting ? t.game.waitingTitle : t.game.notFoundTitle}
           action={
             waiting ? (
               <Button
@@ -31,16 +33,16 @@ export function GamePage({ route }: { route: Extract<Route, { name: 'game' }> })
                   navigate('/');
                 }}
               >
-                Cancel request
+                {t.home.cancelRequest}
               </Button>
             ) : (
               <Link to="/" className="btn btn-secondary btn-md">
-                Your games
+                {t.common.yourGames}
               </Link>
             )
           }
         >
-          {waiting ? 'Your request to join was sent. You’ll get in once an admin approves it.' : 'It may have been deleted, or you’re no longer a player.'}
+          {waiting ? t.game.waitingBody : t.game.notFoundBody}
         </EmptyState>
       </div>
     );
@@ -71,52 +73,56 @@ function GameTabContent({ route }: { route: Extract<Route, { name: 'game' }> }) 
   }
 }
 
-const TABS: { tab: GameTab; label: string; icon: IconName; path: string }[] = [
-  { tab: 'round', label: 'This week', icon: 'flag', path: '' },
-  { tab: 'history', label: 'History', icon: 'history', path: '/history' },
-  { tab: 'standings', label: 'Standings', icon: 'trophy', path: '/standings' },
-  { tab: 'players', label: 'Players', icon: 'users', path: '/players' },
-  { tab: 'settings', label: 'Settings', icon: 'settings', path: '/settings' },
+const TABS: { tab: GameTab; icon: IconName; path: string }[] = [
+  { tab: 'round', icon: 'flag', path: '' },
+  { tab: 'history', icon: 'history', path: '/history' },
+  { tab: 'standings', icon: 'trophy', path: '/standings' },
+  { tab: 'players', icon: 'users', path: '/players' },
+  { tab: 'settings', icon: 'settings', path: '/settings' },
 ];
 
 function GameShell({ tab, children }: { tab: GameTab; children: ReactNode }) {
   const { state, lookup, gameId } = useGame();
+  const { t } = useI18n();
   const copy = useCopy();
   const inviteUrl = state.game.inviteCode ? `${location.origin}/join/${state.game.inviteCode}` : null;
 
   return (
-    <div className="page">
+    <div className="page page-game">
       <header className="game-header">
         <div className="game-header-main">
           <Link to="/" className="back-link">
-            <Icon name="chevronLeft" size={16} /> Games
+            <Icon name="chevronLeft" size={16} /> {t.common.games}
           </Link>
           <h1 className="display game-title" dir="auto">
             {state.game.name}
           </h1>
           <div className="game-header-meta">
             <AvatarStack players={lookup.active} max={8} size={30} />
-            <span className="muted small">{lookup.active.length} players</span>
+            <span className="muted small">{t.common.players(lookup.active.length)}</span>
           </div>
         </div>
         {inviteUrl && (
-          <Button icon="link" onClick={() => copy(inviteUrl, 'Invite link copied')}>
-            Invite
+          <Button icon="link" className="invite-btn" onClick={() => copy(inviteUrl, t.game.inviteCopied)}>
+            <span className="invite-btn-label">{t.game.invite}</span>
           </Button>
         )}
       </header>
 
-      <nav className="tabs" aria-label="Game">
-        {TABS.map((t) => (
+      {/* Top tabs on wide screens; a fixed bottom bar on phones (same element, restyled). */}
+      <nav className="tabs" aria-label={state.game.name}>
+        {TABS.map((item) => (
           <Link
-            key={t.tab}
-            to={`/g/${gameId}${t.path}`}
+            key={item.tab}
+            to={`/g/${gameId}${item.path}`}
             className="tab"
-            aria-current={t.tab === tab ? 'page' : undefined}
+            aria-current={item.tab === tab ? 'page' : undefined}
           >
-            <Icon name={t.icon} size={17} />
-            <span className="tab-label">{t.label}</span>
-            {t.tab === 'players' && lookup.isAdmin && lookup.pending.length > 0 && <span className="badge">{lookup.pending.length}</span>}
+            <span className="tab-icon">
+              <Icon name={item.icon} size={20} />
+              {item.tab === 'players' && lookup.isAdmin && lookup.pending.length > 0 && <span className="badge tab-badge">{lookup.pending.length}</span>}
+            </span>
+            <span className="tab-label">{t.game.tabs[item.tab]}</span>
           </Link>
         ))}
       </nav>

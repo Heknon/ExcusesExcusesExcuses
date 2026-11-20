@@ -7,6 +7,7 @@ import {
   type GameState,
   type GameSummary,
   type Player,
+  type Proof,
   type Role,
   type Round,
   type RoundPatch,
@@ -33,7 +34,7 @@ interface PlayerRow {
 
 const toRound = (r: any): Round => ({ id: r.id, startDate: r.start_date, title: r.title, notes: r.notes, status: r.status });
 
-function toEntry(r: any, hidden: boolean): Entry {
+function toEntry(r: any, hidden: boolean, proofs: Proof[] = []): Entry {
   return {
     roundId: r.round_id,
     playerId: r.player_id,
@@ -47,6 +48,7 @@ function toEntry(r: any, hidden: boolean): Entry {
     betReason: hidden ? '' : r.bet_reason,
     submitted: r.submitted_at != null,
     hidden,
+    proofs,
   };
 }
 
@@ -71,6 +73,19 @@ const SELF_EDITABLE: Record<RoundStatus, EntryField[]> = {
   final: ['notes'],
 };
 
+export const PROOF_MAX_BYTES = 5 * 1024 * 1024;
+const PROOFS_PER_ENTRY = 6;
+
+/** Identify an image by its first bytes, never by what the client claims. */
+export function sniffImage(buf: Buffer): string | null {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  if (buf.toString('ascii', 0, 4) === 'GIF8') return 'image/gif';
+  return null;
+}
+
 const LIMITS: Partial<Record<EntryField, number>> = {
   goal: 500,
   excuse: 1000,
@@ -84,21 +99,21 @@ export function gameService(pool: Pool) {
   async function seat(q: Queryable, userId: number, gameId: number, opts: { admin?: boolean } = {}): Promise<PlayerRow> {
     const { rows } = await q.query<PlayerRow>('SELECT * FROM players WHERE game_id = $1 AND user_id = $2', [gameId, userId]);
     const me = rows[0];
-    if (!me || me.status === 'removed') throw new HttpError(404, 'Game not found');
-    if (me.status === 'pending') throw new HttpError(403, 'Your request to join is waiting for approval');
-    if (opts.admin && me.role !== 'admin') throw new HttpError(403, 'Only admins can do that');
+    if (!me || me.status === 'removed') throw new HttpError(404, 'game_not_found');
+    if (me.status === 'pending') throw new HttpError(403, 'request_pending');
+    if (opts.admin && me.role !== 'admin') throw new HttpError(403, 'admin_only');
     return me;
   }
 
   async function roundInGame(q: Queryable, gameId: number, roundId: number): Promise<Round> {
     const { rows } = await q.query('SELECT * FROM rounds WHERE id = $1 AND game_id = $2', [roundId, gameId]);
-    if (!rows[0]) throw new HttpError(404, 'Round not found');
+    if (!rows[0]) throw new HttpError(404, 'round_not_found');
     return toRound(rows[0]);
   }
 
   async function playerInGame(q: Queryable, gameId: number, playerId: number): Promise<PlayerRow> {
     const { rows } = await q.query<PlayerRow>('SELECT * FROM players WHERE id = $1 AND game_id = $2', [playerId, gameId]);
-    if (!rows[0]) throw new HttpError(404, 'Player not found');
+    if (!rows[0]) throw new HttpError(404, 'player_not_found');
     return rows[0];
   }
 
@@ -122,8 +137,8 @@ export function gameService(pool: Pool) {
 
   function cleanName(name: unknown): string {
     const n = String(name ?? '').trim();
-    if (!n) throw new HttpError(400, 'Name is required');
-    if (n.length > 40) throw new HttpError(400, 'Name is too long');
+    if (!n) throw new HttpError(400, 'name_required');
+    if (n.length > 40) throw new HttpError(400, 'name_too_long');
     return n;
   }
 
@@ -186,14 +201,14 @@ export function gameService(pool: Pool) {
          FROM games g WHERE g.invite_code = $1`,
         [code.trim().toUpperCase(), userId],
       );
-      if (!rows[0]) throw new HttpError(404, 'That invite code doesn’t match any game');
+      if (!rows[0]) throw new HttpError(404, 'invite_not_found');
       const r = rows[0];
       return { id: r.id as number, name: r.name as string, players: r.players as number, status: (r.my_status ?? null) as Player['status'] | null };
     },
 
     async requestJoin(user: User, code: string) {
       const { rows } = await pool.query('SELECT id FROM games WHERE invite_code = $1', [code.trim().toUpperCase()]);
-      if (!rows[0]) throw new HttpError(404, 'That invite code doesn’t match any game');
+      if (!rows[0]) throw new HttpError(404, 'invite_not_found');
       const gameId = rows[0].id as number;
       const existing = await pool.query<PlayerRow>('SELECT * FROM players WHERE game_id = $1 AND user_id = $2', [gameId, user.id]);
       const row = existing.rows[0];
@@ -214,7 +229,7 @@ export function gameService(pool: Pool) {
     async state(userId: number, gameId: number): Promise<GameState> {
       const me = await seat(pool, userId, gameId);
       const isAdmin = me.role === 'admin';
-      const [game, players, rounds, entries] = await Promise.all([
+      const [game, players, rounds, entries, proofs] = await Promise.all([
         pool.query('SELECT * FROM games WHERE id = $1', [gameId]),
         pool.query<PlayerRow>(
           `SELECT p.*, u.email FROM players p LEFT JOIN users u ON u.id = p.user_id
@@ -228,7 +243,18 @@ export function gameService(pool: Pool) {
            WHERE r.game_id = $1 ORDER BY e.round_id, e.player_id`,
           [gameId],
         ),
+        pool.query(
+          `SELECT pr.id, pr.round_id, pr.player_id, pr.created_at
+           FROM proofs pr JOIN rounds r ON r.id = pr.round_id WHERE r.game_id = $1 ORDER BY pr.id`,
+          [gameId],
+        ),
       ]);
+      const proofsByEntry = new Map<string, Proof[]>();
+      for (const p of proofs.rows) {
+        const key = `${p.round_id}:${p.player_id}`;
+        if (!proofsByEntry.has(key)) proofsByEntry.set(key, []);
+        proofsByEntry.get(key)!.push({ id: p.id, createdAt: p.created_at.toISOString() });
+      }
       const roundStatus = new Map(rounds.rows.map((r) => [r.id, r.status as RoundStatus]));
       return {
         game: {
@@ -254,7 +280,11 @@ export function gameService(pool: Pool) {
         // Calls and bets stay secret until the round goes live — from admins too, except for
         // guests (no account), whose picks an admin enters on their behalf.
         entries: entries.rows.map((e) =>
-          toEntry(e, roundStatus.get(e.round_id) === 'planning' && e.player_id !== me.id && !(isAdmin && e.is_guest)),
+          toEntry(
+            e,
+            roundStatus.get(e.round_id) === 'planning' && e.player_id !== me.id && !(isAdmin && e.is_guest),
+            proofsByEntry.get(`${e.round_id}:${e.player_id}`),
+          ),
         ),
       };
     },
@@ -295,10 +325,10 @@ export function gameService(pool: Pool) {
         const target = await playerInGame(c, gameId, playerId);
         switch (input.action) {
           case 'approve': {
-            if (target.status !== 'pending') throw new HttpError(400, 'No pending request');
+            if (target.status !== 'pending') throw new HttpError(400, 'no_pending_request');
             if (input.guestId != null) {
               const guest = await playerInGame(c, gameId, Number(input.guestId));
-              if (guest.user_id != null) throw new HttpError(400, 'That player already has an account');
+              if (guest.user_id != null) throw new HttpError(400, 'guest_has_account');
               // The account takes over the guest seat and its history; the request row goes away.
               await c.query('DELETE FROM players WHERE id = $1', [target.id]);
               await c.query(`UPDATE players SET user_id = $2, status = 'active' WHERE id = $1`, [guest.id, target.user_id]);
@@ -310,12 +340,12 @@ export function gameService(pool: Pool) {
             return { id: target.id };
           }
           case 'reject':
-            if (target.status !== 'pending') throw new HttpError(400, 'No pending request');
+            if (target.status !== 'pending') throw new HttpError(400, 'no_pending_request');
             await c.query('DELETE FROM players WHERE id = $1', [target.id]);
             return { id: target.id };
           case 'remove':
             if (target.role === 'admin' && target.user_id != null && (await adminCount(c, gameId)) <= 1) {
-              throw new HttpError(400, 'Make someone else an admin first');
+              throw new HttpError(400, 'last_admin_remove');
             }
             await c.query(`UPDATE players SET status = 'removed', role = 'player' WHERE id = $1`, [target.id]);
             // Drop them from a round that hasn't started; keep history.
@@ -326,7 +356,7 @@ export function gameService(pool: Pool) {
             );
             return { id: target.id };
           case 'restore':
-            if (target.status !== 'removed') throw new HttpError(400, 'Player isn’t removed');
+            if (target.status !== 'removed') throw new HttpError(400, 'player_not_removed');
             await c.query(`UPDATE players SET status = 'active' WHERE id = $1`, [target.id]);
             await seatInPlanningRound(c, gameId, target.id);
             return { id: target.id };
@@ -337,17 +367,17 @@ export function gameService(pool: Pool) {
             if (input.role !== undefined) {
               const role = input.role === 'admin' ? 'admin' : 'player';
               if (role === 'admin' && (target.user_id == null || target.status !== 'active')) {
-                throw new HttpError(400, 'Only active players with an account can be admins');
+                throw new HttpError(400, 'admin_needs_account');
               }
               if (role === 'player' && target.role === 'admin' && (await adminCount(c, gameId)) <= 1) {
-                throw new HttpError(400, 'A game needs at least one admin');
+                throw new HttpError(400, 'last_admin_demote');
               }
               await c.query('UPDATE players SET role = $2 WHERE id = $1', [target.id, role]);
             }
             return { id: target.id };
           }
           default:
-            throw new HttpError(400, 'Unknown action');
+            throw new HttpError(400, 'unknown_action');
         }
       });
     },
@@ -359,7 +389,7 @@ export function gameService(pool: Pool) {
           `SELECT count(*)::int AS n FROM players WHERE game_id = $1 AND status = 'active' AND user_id IS NOT NULL`,
           [gameId],
         );
-        if (rows[0].n > 1) throw new HttpError(400, 'You’re the only admin. Make someone else an admin before leaving.');
+        if (rows[0].n > 1) throw new HttpError(400, 'last_admin_leave');
       }
       await pool.query(`UPDATE players SET status = 'removed', role = 'player' WHERE id = $1`, [me.id]);
     },
@@ -367,10 +397,10 @@ export function gameService(pool: Pool) {
     async createRound(userId: number, gameId: number, input: { startDate?: unknown; title?: unknown }) {
       await seat(pool, userId, gameId, { admin: true });
       const startDate = String(input.startDate ?? '');
-      if (!ISO_DATE.test(startDate)) throw new HttpError(400, 'startDate must be YYYY-MM-DD');
+      if (!ISO_DATE.test(startDate)) throw new HttpError(400, 'invalid_date');
       return transaction(pool, async (c) => {
         const open = await c.query(`SELECT 1 FROM rounds WHERE game_id = $1 AND status <> 'final'`, [gameId]);
-        if (open.rows.length) throw new HttpError(409, 'Finish the current round before starting a new one');
+        if (open.rows.length) throw new HttpError(409, 'round_open');
         const { rows } = await c
           .query('INSERT INTO rounds (game_id, start_date, title) VALUES ($1, $2, $3) RETURNING *', [
             gameId,
@@ -378,7 +408,7 @@ export function gameService(pool: Pool) {
             String(input.title ?? '').trim(),
           ])
           .catch((err) => {
-            if (err?.code === '23505') throw new HttpError(409, 'There’s already a round for that week');
+            if (err?.code === '23505') throw new HttpError(409, 'round_exists');
             friendly(err);
           });
         await c.query(
@@ -394,12 +424,12 @@ export function gameService(pool: Pool) {
       const me = await seat(pool, userId, gameId);
       const round = await roundInGame(pool, gameId, roundId);
       const adminOnly = patch.status !== undefined || patch.title !== undefined || patch.startDate !== undefined;
-      if (adminOnly && me.role !== 'admin') throw new HttpError(403, 'Only admins can do that');
-      if (patch.status !== undefined && !ROUND_STATUSES.includes(patch.status)) throw new HttpError(400, 'Invalid status');
-      if (patch.startDate !== undefined && !ISO_DATE.test(patch.startDate)) throw new HttpError(400, 'Invalid date');
+      if (adminOnly && me.role !== 'admin') throw new HttpError(403, 'admin_only');
+      if (patch.status !== undefined && !ROUND_STATUSES.includes(patch.status)) throw new HttpError(400, 'invalid_status');
+      if (patch.startDate !== undefined && !ISO_DATE.test(patch.startDate)) throw new HttpError(400, 'invalid_date');
       if (patch.status && patch.status !== 'final' && round.status === 'final') {
         const open = await pool.query(`SELECT 1 FROM rounds WHERE game_id = $1 AND status <> 'final' AND id <> $2`, [gameId, roundId]);
-        if (open.rows.length) throw new HttpError(409, 'Another round is already open');
+        if (open.rows.length) throw new HttpError(409, 'another_round_open');
       }
       // Notes are shared: any player can add context to the round.
       await pool
@@ -432,7 +462,7 @@ export function gameService(pool: Pool) {
         // Guests have no account, so the admin plays their picks for them.
         const secret = round.status === 'planning' && !isSelf && target.user_id != null && (PICKS.includes(f) || f === 'submitted');
         if (me.role === 'admin' && !secret) continue;
-        throw new HttpError(403, isSelf ? 'That can’t be changed at this stage of the round' : 'You can only edit your own entry');
+        throw new HttpError(403, isSelf ? 'locked_phase' : 'own_entry_only');
       }
 
       const sets: string[] = [];
@@ -444,17 +474,17 @@ export function gameService(pool: Pool) {
         }
         let value: unknown = patch[f];
         if (f === 'outcome') {
-          if (!OUTCOMES.includes(value as any)) throw new HttpError(400, 'Invalid outcome');
+          if (!OUTCOMES.includes(value as any)) throw new HttpError(400, 'invalid_outcome');
         } else if (f === 'excusePickId' || f === 'betPickId') {
           if (value != null) {
             const pick = await playerInGame(pool, gameId, Number(value));
-            if (pick.id === playerId) throw new HttpError(400, 'You can’t pick yourself');
-            if (pick.status !== 'active') throw new HttpError(400, 'That player isn’t in the game');
+            if (pick.id === playerId) throw new HttpError(400, 'self_pick');
+            if (pick.status !== 'active') throw new HttpError(400, 'pick_not_playing');
             value = pick.id;
           } else value = null;
         } else {
           value = String(value ?? '').trim();
-          if ((value as string).length > (LIMITS[f] ?? 1000)) throw new HttpError(400, 'That’s too long');
+          if ((value as string).length > (LIMITS[f] ?? 1000)) throw new HttpError(400, 'too_long');
         }
         values.push(value);
         sets.push(`${ENTRY_COLUMNS[f as keyof typeof ENTRY_COLUMNS]} = $${values.length}`);
@@ -465,6 +495,56 @@ export function gameService(pool: Pool) {
         await c.query('INSERT INTO round_entries (round_id, player_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [roundId, playerId]);
         await c.query(`UPDATE round_entries SET ${sets.join(', ')} WHERE round_id = $1 AND player_id = $2`, values);
       });
+    },
+
+    /** Attach a photo to an entry. The player themselves, or an admin, once the week has started. */
+    async addProof(user: User, gameId: number, roundId: number, playerId: number, bytes: Buffer): Promise<Proof> {
+      const me = await seat(pool, user.id, gameId);
+      const round = await roundInGame(pool, gameId, roundId);
+      const target = await playerInGame(pool, gameId, playerId);
+      if (target.id !== me.id && me.role !== 'admin') throw new HttpError(403, 'own_entry_only');
+      if (round.status === 'planning') throw new HttpError(400, 'proof_phase');
+      if (bytes.length > PROOF_MAX_BYTES) throw new HttpError(413, 'proof_too_large');
+      const mime = sniffImage(bytes);
+      if (!mime) throw new HttpError(415, 'proof_not_image');
+      return transaction(pool, async (c) => {
+        const entry = await c.query('SELECT 1 FROM round_entries WHERE round_id = $1 AND player_id = $2 FOR UPDATE', [roundId, playerId]);
+        if (!entry.rows.length) throw new HttpError(404, 'player_not_found');
+        const { rows: count } = await c.query('SELECT count(*)::int AS n FROM proofs WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
+        if (count[0].n >= PROOFS_PER_ENTRY) throw new HttpError(400, 'proof_limit');
+        const { rows } = await c.query(
+          'INSERT INTO proofs (round_id, player_id, uploaded_by, mime, bytes) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
+          [roundId, playerId, user.id, mime, bytes],
+        );
+        return { id: rows[0].id, createdAt: rows[0].created_at.toISOString() };
+      });
+    },
+
+    /** A proof's bytes, for anyone seated in its game. */
+    async proof(userId: number, proofId: number) {
+      const { rows } = await pool.query(
+        `SELECT pr.mime, pr.bytes, r.game_id FROM proofs pr JOIN rounds r ON r.id = pr.round_id WHERE pr.id = $1`,
+        [proofId],
+      );
+      if (!rows[0]) throw new HttpError(404, 'proof_not_found');
+      await seat(pool, userId, rows[0].game_id).catch(() => {
+        throw new HttpError(404, 'proof_not_found');
+      });
+      return { mime: rows[0].mime as string, bytes: rows[0].bytes as Buffer };
+    },
+
+    async deleteProof(userId: number, proofId: number) {
+      const { rows } = await pool.query(
+        `SELECT pr.player_id, pr.uploaded_by, r.game_id FROM proofs pr JOIN rounds r ON r.id = pr.round_id WHERE pr.id = $1`,
+        [proofId],
+      );
+      if (!rows[0]) throw new HttpError(404, 'proof_not_found');
+      const me = await seat(pool, userId, rows[0].game_id).catch(() => {
+        throw new HttpError(404, 'proof_not_found');
+      });
+      const allowed = me.role === 'admin' || me.id === rows[0].player_id || rows[0].uploaded_by === userId;
+      if (!allowed) throw new HttpError(403, 'own_entry_only');
+      await pool.query('DELETE FROM proofs WHERE id = $1', [proofId]);
     },
 
     async removeEntry(userId: number, gameId: number, roundId: number, playerId: number) {
@@ -488,13 +568,13 @@ export function gameService(pool: Pool) {
     ) {
       await seat(pool, userId, gameId, { admin: true });
       const startDate = String(input.startDate ?? '');
-      if (!ISO_DATE.test(startDate)) throw new HttpError(400, 'startDate must be YYYY-MM-DD');
+      if (!ISO_DATE.test(startDate)) throw new HttpError(400, 'invalid_date');
       const rows = Array.isArray(input.rows) ? input.rows.filter((r) => r?.name?.trim()) : [];
-      if (!rows.length) throw new HttpError(400, 'Nothing to import');
+      if (!rows.length) throw new HttpError(400, 'nothing_to_import');
 
       return transaction(pool, async (c) => {
         const open = await c.query(`SELECT 1 FROM rounds WHERE game_id = $1 AND status <> 'final'`, [gameId]);
-        if (open.rows.length) throw new HttpError(409, 'Finish the current round before importing another');
+        if (open.rows.length) throw new HttpError(409, 'round_open');
 
         const { rows: existing } = await c.query<PlayerRow>(`SELECT * FROM players WHERE game_id = $1 AND status <> 'pending'`, [gameId]);
         const ids = new Map(existing.map((p) => [p.name, p.id]));
@@ -516,7 +596,7 @@ export function gameService(pool: Pool) {
             String(input.title ?? '').trim(),
           ])
           .catch((err) => {
-            if (err?.code === '23505') throw new HttpError(409, 'There’s already a round for that week');
+            if (err?.code === '23505') throw new HttpError(409, 'round_exists');
             friendly(err);
           });
         for (const r of rows) {
