@@ -47,16 +47,19 @@ test('postgres: members, weeks and entries round-trip', { skip: !URL_ && 'TEST_D
   assert.equal(week.startDate, '2026-11-15');
 
   await d.updateEntry(week.id, b.id, { outcome: 'failed', excuse: 'חול' });
-  await d.updateWeek(week.id, { closed: true, title: 'שבוע 1' });
+  await d.updateWeek(week.id, { closed: true, title: 'שבוע 1', notes: 'Short week, holiday on Thursday' });
+  await d.updateEntry(week.id, a.id, { notes: 'Moved to next week' });
 
   const s = await d.state();
   assert.equal(s.weeks[0].title, 'שבוע 1');
   assert.equal(s.weeks[0].closed, true);
+  assert.equal(s.weeks[0].notes, 'Short week, holiday on Thursday');
+  assert.equal(s.entries.find((e) => e.memberId === a.id)!.notes, 'Moved to next week');
   const eli = s.entries.find((e) => e.memberId === b.id)!;
   assert.deepEqual([eli.goal, eli.outcome, eli.excuse], ['ריצה', 'failed', 'חול']);
   assert.equal(s.entries.find((e) => e.memberId === a.id)!.excusePickId, b.id);
 
-  await assert.rejects(d.updateEntry(week.id, a.id, { outcome: 'nope' as any }), /Bad outcome/);
+  await assert.rejects(d.updateEntry(week.id, a.id, { outcome: 'nope' as any }), /Invalid outcome/);
   await assert.rejects(d.updateMember(b.id, { name: 'מייקל' }), (e: any) => e.status === 409);
 
   // Deleting a member clears picks of them and drops their entries.

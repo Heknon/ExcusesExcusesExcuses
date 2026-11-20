@@ -1,144 +1,140 @@
-import { useEffect, useState } from 'react';
-import { api, setPasscode } from './api.ts';
-import { useAppState } from './store.ts';
-import { WeekView } from './WeekView.tsx';
-import { Leaderboard } from './Leaderboard.tsx';
-import { ImportView } from './ImportView.tsx';
-import { MembersView } from './MembersView.tsx';
-import { Empty, formatDate, thisSunday } from './ui.tsx';
+import { useEffect, useState, type FormEvent } from 'react';
+import { setPasscode } from './api.ts';
+import { EmptyState } from './components.tsx';
+import { ImportPage } from './pages/ImportPage.tsx';
+import { PeoplePage } from './pages/PeoplePage.tsx';
+import { PersonPage } from './pages/PersonPage.tsx';
+import { SearchPage } from './pages/SearchPage.tsx';
+import { StandingsPage } from './pages/StandingsPage.tsx';
+import { WeekPage } from './pages/WeekPage.tsx';
+import { WeeksPage } from './pages/WeeksPage.tsx';
+import { Link, matchRoute, navigate, useLocation, type Route } from './router.tsx';
+import { StoreContext, useAppStore } from './store.ts';
 
-type View = 'week' | 'board' | 'import' | 'members';
-
-const NAV: { id: View; label: string }[] = [
-  { id: 'week', label: '📅 השבוע' },
-  { id: 'board', label: '🏆 טבלה' },
-  { id: 'import', label: '📥 ייבוא' },
-  { id: 'members', label: '👥 חברים' },
+const NAV: { to: string; label: string; active: (r: Route) => boolean }[] = [
+  { to: '/weeks', label: 'Weeks', active: (r) => r.name === 'weeks' || r.name === 'week' || r.name === 'home' },
+  { to: '/people', label: 'People', active: (r) => r.name === 'people' || r.name === 'person' },
+  { to: '/standings', label: 'Standings', active: (r) => r.name === 'standings' },
+  { to: '/import', label: 'Import', active: (r) => r.name === 'import' },
 ];
 
 export function App() {
-  const store = useAppState();
-  const { state, status, error, setError, run } = store;
-  const [view, setView] = useState<View>('week');
-  const [weekId, setWeekId] = useState<number | null>(null);
+  const store = useAppStore();
+  const { path, params } = useLocation();
+  const route = matchRoute(path, params);
+  const latest = store.lookup.weeks[0];
 
+  // "/" always shows the latest week.
   useEffect(() => {
-    if (weekId != null && state.weeks.some((w) => w.id === weekId)) return;
-    setWeekId(state.weeks[0]?.id ?? null);
-  }, [state.weeks, weekId]);
+    if (route.name === 'home' && store.status === 'ready') navigate(latest ? `/weeks/${latest.id}` : '/weeks', { replace: true });
+  }, [route.name, store.status, latest]);
 
-  if (status === 'locked') return <PasscodeGate onSubmit={() => store.reload()} />;
-  if (status === 'loading') return <div className="splash">טוען תירוצים…</div>;
-
-  const week = state.weeks.find((w) => w.id === weekId) ?? null;
-
-  const newWeek = () =>
-    run(async () => {
-      const taken = new Set(state.weeks.map((w) => w.startDate));
-      const date = taken.has(thisSunday()) ? nextFreeSunday(taken) : thisSunday();
-      const w = await api.addWeek({ startDate: date });
-      setWeekId(w.id);
-    });
+  if (store.status === 'locked') return <PasscodeGate onSubmit={store.reload} />;
 
   return (
-    <div className="app">
-      <header className="top">
-        <h1 className="logo">
-          <span>Excuses</span> <span>Excuses</span> <span>Excuses</span>
-        </h1>
-        <p className="tagline">א ביצועים · א תירוצים · א הימורים</p>
-        <nav className="nav">
-          {NAV.map((n) => (
-            <button key={n.id} className={`nav-btn ${view === n.id ? 'on' : ''}`} onClick={() => setView(n.id)}>
-              {n.label}
+    <StoreContext.Provider value={store}>
+      <div className="shell">
+        <header className="topbar">
+          <Link to="/" className="brand">
+            Excuses Excuses Excuses
+          </Link>
+          <nav className="nav" aria-label="Main">
+            {NAV.map((n) => (
+              <Link key={n.to} to={n.to} className="nav-link" aria-current={n.active(route) ? 'page' : undefined}>
+                {n.label}
+              </Link>
+            ))}
+          </nav>
+          <SearchBox initial={route.name === 'search' ? route.query : ''} />
+        </header>
+
+        <main className="main">
+          {store.status === 'loading' ? (
+            <p className="muted">Loading…</p>
+          ) : store.status === 'offline' ? (
+            <EmptyState title="Can't reach the server">Check your connection and reload.</EmptyState>
+          ) : (
+            <Page route={route} />
+          )}
+        </main>
+
+        {store.error && (
+          <div className="toast" role="alert">
+            <span>{store.error}</span>
+            <button className="button-link" onClick={store.dismissError}>
+              Dismiss
             </button>
-          ))}
-        </nav>
-      </header>
-
-      {error && (
-        <div className="toast" role="alert" onClick={() => setError('')}>
-          ⚠️ {error}
-        </div>
-      )}
-      {status === 'error' && <Empty>אין חיבור לשרת. {error}</Empty>}
-
-      <main>
-        {view === 'week' && (
-          <>
-            <div className="week-picker">
-              <button className="btn primary" onClick={newWeek} disabled={!state.members.length}>
-                + שבוע חדש
-              </button>
-              <div className="week-pills">
-                {state.weeks.map((w) => (
-                  <button key={w.id} className={`pill ${w.id === weekId ? 'on' : ''}`} onClick={() => setWeekId(w.id)}>
-                    {w.closed ? '🔒 ' : ''}
-                    {w.title || formatDate(w.startDate)}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {week ? (
-              <WeekView key={week.id} store={store} week={week} onDeleted={() => setWeekId(null)} />
-            ) : (
-              <Empty>
-                <p>עוד אין שבועות.</p>
-                <p>
-                  הכי מהיר: <button className="link" onClick={() => setView('import')}>להדביק את ההודעה מהוואטסאפ</button>
-                  {' '}או <button className="link" onClick={() => setView('members')}>להוסיף חברים</button> ואז “שבוע חדש”.
-                </p>
-              </Empty>
-            )}
-          </>
+          </div>
         )}
-        {view === 'board' && <Leaderboard state={state} />}
-        {view === 'import' && (
-          <ImportView
-            store={store}
-            onDone={(id) => {
-              setWeekId(id);
-              setView('week');
-            }}
-          />
-        )}
-        {view === 'members' && <MembersView store={store} />}
-      </main>
-    </div>
+      </div>
+    </StoreContext.Provider>
   );
 }
 
-function nextFreeSunday(taken: Set<string>) {
-  const d = new Date();
-  d.setDate(d.getDate() - d.getDay());
-  const pad = (n: number) => String(n).padStart(2, '0');
-  for (;;) {
-    d.setDate(d.getDate() + 7);
-    const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    if (!taken.has(iso)) return iso;
+function Page({ route }: { route: Route }) {
+  switch (route.name) {
+    case 'home':
+      return null;
+    case 'week':
+      return <WeekPage key={route.id} id={route.id} />;
+    case 'weeks':
+      return <WeeksPage />;
+    case 'people':
+      return <PeoplePage />;
+    case 'person':
+      return <PersonPage key={route.id} id={route.id} />;
+    case 'standings':
+      return <StandingsPage />;
+    case 'search':
+      return <SearchPage query={route.query} />;
+    case 'import':
+      return <ImportPage />;
+    case 'notFound':
+      return <EmptyState title="Page not found" />;
   }
 }
 
+function SearchBox({ initial }: { initial: string }) {
+  const [q, setQ] = useState(initial);
+  useEffect(() => setQ(initial), [initial]);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    navigate(q.trim() ? `/search?q=${encodeURIComponent(q.trim())}` : '/search');
+  };
+  return (
+    <form className="search" role="search" onSubmit={submit}>
+      <input
+        className="input"
+        type="search"
+        dir="auto"
+        placeholder="Search goals, excuses, notes"
+        aria-label="Search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+    </form>
+  );
+}
+
 function PasscodeGate({ onSubmit }: { onSubmit: () => void }) {
-  const [v, setV] = useState('');
+  const [value, setValue] = useState('');
   return (
     <div className="gate">
-      <h1 className="logo">
-        <span>Excuses</span> <span>Excuses</span> <span>Excuses</span>
-      </h1>
       <form
+        className="gate-form"
         onSubmit={(e) => {
           e.preventDefault();
-          setPasscode(v);
+          setPasscode(value);
           onSubmit();
         }}
       >
+        <h1 className="brand">Excuses Excuses Excuses</h1>
         <label>
-          סיסמת הקבוצה
-          <input className="field" type="password" value={v} autoFocus onChange={(e) => setV(e.target.value)} />
+          Team passcode
+          <input className="input" type="password" value={value} autoFocus onChange={(e) => setValue(e.target.value)} />
         </label>
-        <button className="btn primary" type="submit">
-          כניסה
+        <button className="button primary" type="submit">
+          Continue
         </button>
       </form>
     </div>

@@ -1,7 +1,5 @@
 import pg from 'pg';
-import type { AppState, Entry, EntryPatch, Member, Outcome, Week } from '../shared/types.ts';
-
-const OUTCOMES: Outcome[] = ['pending', 'done', 'partial', 'failed'];
+import { OUTCOMES, type AppState, type Entry, type EntryPatch, type Member, type MemberPatch, type Week, type WeekPatch } from '../shared/types.ts';
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS members (
@@ -27,6 +25,9 @@ const SCHEMA = `
     bet_reason TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (week_id, member_id)
   );
+  -- Added after the first release.
+  ALTER TABLE weeks ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+  ALTER TABLE entries ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
 `;
 
 // Return DATE columns as plain 'YYYY-MM-DD' strings, never as JS Dates (no timezone shifts).
@@ -43,13 +44,14 @@ export class HttpError extends Error {
 type Queryable = Pick<pg.Pool | pg.PoolClient, 'query'>;
 
 const toMember = (r: any): Member => ({ id: r.id, name: r.name, active: r.active });
-const toWeek = (r: any): Week => ({ id: r.id, title: r.title, startDate: r.start_date, closed: r.closed });
+const toWeek = (r: any): Week => ({ id: r.id, title: r.title, startDate: r.start_date, closed: r.closed, notes: r.notes });
 const toEntry = (r: any): Entry => ({
   weekId: r.week_id,
   memberId: r.member_id,
   goal: r.goal,
   outcome: r.outcome,
   excuse: r.excuse,
+  notes: r.notes,
   excusePickId: r.excuse_pick_id,
   excuseReason: r.excuse_reason,
   betPickId: r.bet_pick_id,
@@ -60,6 +62,7 @@ const ENTRY_COLUMNS: Record<keyof EntryPatch, string> = {
   goal: 'goal',
   outcome: 'outcome',
   excuse: 'excuse',
+  notes: 'notes',
   excusePickId: 'excuse_pick_id',
   excuseReason: 'excuse_reason',
   betPickId: 'bet_pick_id',
@@ -68,9 +71,9 @@ const ENTRY_COLUMNS: Record<keyof EntryPatch, string> = {
 
 /** Turn Postgres constraint errors into friendly 4xx responses. */
 function friendly(err: any): never {
-  if (err?.code === '23505') throw new HttpError(409, 'השם הזה כבר קיים');
-  if (err?.code === '23503') throw new HttpError(400, 'חבר או שבוע לא קיים');
-  if (err?.code === '22007' || err?.code === '22008') throw new HttpError(400, 'תאריך לא תקין');
+  if (err?.code === '23505') throw new HttpError(409, 'That name is already taken');
+  if (err?.code === '23503') throw new HttpError(400, 'Unknown member or week');
+  if (err?.code === '22007' || err?.code === '22008') throw new HttpError(400, 'Invalid date');
   throw err;
 }
 
@@ -80,7 +83,7 @@ async function upsertEntry(q: Queryable, weekId: number, memberId: number, patch
   for (const [key, col] of Object.entries(ENTRY_COLUMNS) as [keyof EntryPatch, string][]) {
     if (!(key in patch)) continue;
     let value = patch[key] as any;
-    if (key === 'outcome' && !OUTCOMES.includes(value)) throw new HttpError(400, 'Bad outcome');
+    if (key === 'outcome' && !OUTCOMES.includes(value)) throw new HttpError(400, 'Invalid outcome');
     if (key === 'excusePickId' || key === 'betPickId') value = value == null ? null : Number(value);
     else value = String(value ?? '').trim();
     values.push(value);
@@ -140,7 +143,7 @@ export async function openDb(connectionString: string) {
       return toMember(rows[0]);
     },
 
-    async updateMember(id: number, patch: { name?: string; active?: boolean }) {
+    async updateMember(id: number, patch: MemberPatch) {
       if (patch.name !== undefined && !patch.name.trim()) throw new HttpError(400, 'Name is required');
       await pool
         .query(
@@ -171,12 +174,12 @@ export async function openDb(connectionString: string) {
       });
     },
 
-    async updateWeek(id: number, patch: { title?: string; startDate?: string; closed?: boolean }) {
+    async updateWeek(id: number, patch: WeekPatch) {
       await pool
         .query(
           `UPDATE weeks SET title = COALESCE($2, title), start_date = COALESCE($3::date, start_date),
-             closed = COALESCE($4, closed) WHERE id = $1`,
-          [id, patch.title?.trim() ?? null, patch.startDate ?? null, patch.closed ?? null],
+             closed = COALESCE($4, closed), notes = COALESCE($5, notes) WHERE id = $1`,
+          [id, patch.title?.trim() ?? null, patch.startDate ?? null, patch.closed ?? null, patch.notes?.trim() ?? null],
         )
         .catch(friendly);
     },

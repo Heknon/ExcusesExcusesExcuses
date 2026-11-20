@@ -4,82 +4,99 @@ export const POINTS = {
   done: 3,
   partial: 1,
   failed: 0,
-  /** Predicted someone would come back with excuses, and they did. */
-  excuseHit: 1,
-  /** Bet that someone would deliver, and they did. */
+  /** Called excuses on someone who then missed. */
+  callHit: 1,
+  /** Bet on someone who then delivered. */
   betHit: 1,
 } as const;
 
 export interface MemberStats {
   memberId: number;
   points: number;
+  /** Weeks with a recorded outcome. */
   weeks: number;
   done: number;
   partial: number;
   failed: number;
-  excuseHits: number;
-  excuseCalls: number;
+  callHits: number;
+  calls: number;
   betHits: number;
-  betCalls: number;
-  /** How many times others predicted this member would make excuses. */
-  doubtedBy: number;
-  /** How many times others bet on this member. */
-  backedBy: number;
-  /** Current run of consecutive "done" weeks, most recent first. */
+  bets: number;
+  /** Times others called excuses on this member. */
+  doubted: number;
+  /** Times others bet on this member. */
+  backed: number;
+  /** Consecutive most-recent resolved weeks marked done. */
   streak: number;
 }
 
-const resolved = (o: Outcome) => o !== 'pending';
+export const isResolved = (o: Outcome | undefined): o is Exclude<Outcome, 'pending'> => !!o && o !== 'pending';
 
-export function weekPoints(entry: Entry, outcomes: Map<number, Outcome>): number {
-  let p = 0;
-  if (resolved(entry.outcome)) p += POINTS[entry.outcome as 'done' | 'partial' | 'failed'];
-  if (entry.excusePickId != null && outcomes.get(entry.excusePickId) === 'failed') p += POINTS.excuseHit;
-  if (entry.betPickId != null && outcomes.get(entry.betPickId) === 'done') p += POINTS.betHit;
-  return p;
+export function ratio(hits: number, total: number): number | null {
+  return total ? hits / total : null;
+}
+
+/** Points one entry earned, given everyone's outcomes that week. */
+export function entryPoints(entry: Entry, outcomes: Map<number, Outcome>): number {
+  let points = isResolved(entry.outcome) ? POINTS[entry.outcome] : 0;
+  if (entry.excusePickId != null && outcomes.get(entry.excusePickId) === 'failed') points += POINTS.callHit;
+  if (entry.betPickId != null && outcomes.get(entry.betPickId) === 'done') points += POINTS.betHit;
+  return points;
+}
+
+export function outcomesByMember(entries: Entry[]): Map<number, Outcome> {
+  return new Map(entries.map((e) => [e.memberId, e.outcome]));
 }
 
 export function computeStats(state: AppState): MemberStats[] {
-  const stats = new Map<number, MemberStats>();
-  for (const m of state.members) {
-    stats.set(m.id, {
-      memberId: m.id, points: 0, weeks: 0, done: 0, partial: 0, failed: 0,
-      excuseHits: 0, excuseCalls: 0, betHits: 0, betCalls: 0,
-      doubtedBy: 0, backedBy: 0, streak: 0,
-    });
-  }
+  const stats = new Map<number, MemberStats>(
+    state.members.map((m) => [
+      m.id,
+      {
+        memberId: m.id, points: 0, weeks: 0, done: 0, partial: 0, failed: 0,
+        callHits: 0, calls: 0, betHits: 0, bets: 0, doubted: 0, backed: 0, streak: 0,
+      },
+    ]),
+  );
+  const streakBroken = new Set<number>();
+  const newestFirst = [...state.weeks].sort((a, b) => b.startDate.localeCompare(a.startDate) || b.id - a.id);
 
-  const weeksSorted = [...state.weeks].sort((a, b) => b.startDate.localeCompare(a.startDate) || b.id - a.id);
-  const streakOpen = new Set(state.members.map((m) => m.id));
-
-  for (const week of weeksSorted) {
+  for (const week of newestFirst) {
     const entries = state.entries.filter((e) => e.weekId === week.id);
-    const outcomes = new Map(entries.map((e) => [e.memberId, e.outcome]));
+    const outcomes = outcomesByMember(entries);
+
     for (const e of entries) {
       const s = stats.get(e.memberId);
       if (!s) continue;
-      if (e.excusePickId != null) stats.get(e.excusePickId) && stats.get(e.excusePickId)!.doubtedBy++;
-      if (e.betPickId != null) stats.get(e.betPickId) && stats.get(e.betPickId)!.backedBy++;
+      if (e.excusePickId != null) {
+        const target = stats.get(e.excusePickId);
+        if (target) target.doubted++;
+      }
+      if (e.betPickId != null) {
+        const target = stats.get(e.betPickId);
+        if (target) target.backed++;
+      }
 
-      if (resolved(e.outcome)) {
+      if (isResolved(e.outcome)) {
         s.weeks++;
-        s[e.outcome as 'done' | 'partial' | 'failed']++;
-        if (streakOpen.has(e.memberId)) {
+        s[e.outcome]++;
+        if (!streakBroken.has(e.memberId)) {
           if (e.outcome === 'done') s.streak++;
-          else streakOpen.delete(e.memberId);
+          else streakBroken.add(e.memberId);
         }
       }
-      const exTarget = e.excusePickId != null ? outcomes.get(e.excusePickId) : undefined;
-      if (exTarget && resolved(exTarget)) {
-        s.excuseCalls++;
-        if (exTarget === 'failed') s.excuseHits++;
+
+      const called = e.excusePickId != null ? outcomes.get(e.excusePickId) : undefined;
+      if (isResolved(called)) {
+        s.calls++;
+        if (called === 'failed') s.callHits++;
       }
-      const betTarget = e.betPickId != null ? outcomes.get(e.betPickId) : undefined;
-      if (betTarget && resolved(betTarget)) {
-        s.betCalls++;
-        if (betTarget === 'done') s.betHits++;
+      const backed = e.betPickId != null ? outcomes.get(e.betPickId) : undefined;
+      if (isResolved(backed)) {
+        s.bets++;
+        if (backed === 'done') s.betHits++;
       }
-      s.points += weekPoints(e, outcomes);
+      s.points += entryPoints(e, outcomes);
     }
   }
 

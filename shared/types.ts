@@ -1,5 +1,7 @@
 export type Outcome = 'pending' | 'done' | 'partial' | 'failed';
 
+export const OUTCOMES: readonly Outcome[] = ['pending', 'done', 'partial', 'failed'];
+
 export interface Member {
   id: number;
   name: string;
@@ -9,29 +11,35 @@ export interface Member {
 export interface Week {
   id: number;
   title: string;
-  startDate: string; // YYYY-MM-DD
+  /** First day of the week (Sunday), YYYY-MM-DD. */
+  startDate: string;
   closed: boolean;
+  /** Free-form notes about the week as a whole. */
+  notes: string;
 }
 
-/** One member's row for one week: their goal, their two predictions, and how it went. */
+/** One member's row for one week. */
 export interface Entry {
   weekId: number;
   memberId: number;
-  /** ביצועים – what this member commits to doing this week. */
+  /** What the member commits to this week. */
   goal: string;
-  /** Result of the goal, set when the week is wrapped up. */
   outcome: Outcome;
-  /** The excuse this member actually gave (if they didn't deliver). */
+  /** The member's explanation when the goal wasn't fully met. */
   excuse: string;
-  /** תירוצים – who this member predicts will come back with excuses. */
+  /** Free-form notes: what happened, what was learned, follow-ups. */
+  notes: string;
+  /** Who this member predicts will come back with excuses. */
   excusePickId: number | null;
   excuseReason: string;
-  /** הימורים – who this member bets will deliver. */
+  /** Who this member bets will deliver. */
   betPickId: number | null;
   betReason: string;
 }
 
 export type EntryPatch = Partial<Omit<Entry, 'weekId' | 'memberId'>>;
+export type WeekPatch = Partial<Pick<Week, 'title' | 'startDate' | 'closed' | 'notes'>>;
+export type MemberPatch = Partial<Pick<Member, 'name' | 'active'>>;
 
 export interface AppState {
   members: Member[];
@@ -46,6 +54,7 @@ export function emptyEntry(weekId: number, memberId: number): Entry {
     goal: '',
     outcome: 'pending',
     excuse: '',
+    notes: '',
     excusePickId: null,
     excuseReason: '',
     betPickId: null,

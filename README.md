@@ -1,25 +1,26 @@
 # Excuses Excuses Excuses
 
-**א ביצועים · א תירוצים · א הימורים** — a weekly accountability game for the team.
+A weekly accountability log for a small group. Each week, every member writes down:
 
-Every week, each member posts:
+- **Goal** — what they commit to doing that week
+- **Excuse call** — who they think won't deliver, and why
+- **Bet** — who they think will deliver, and why
 
-| | |
-|---|---|
-| **ביצועים** | what they commit to doing this week |
-| **תירוצים** | who they think will come back with excuses, and why |
-| **הימורים** | who they bet will actually deliver, and why |
+At the end of the week each goal is marked *done*, *partial* or *missed*, with the excuse if there was one.
+Over time it builds into a record of what everyone set out to do, what actually happened, and how well
+the group reads each other.
 
-At the end of the week you mark each goal ✅ done / 🤏 partial / 🙄 excuses (and record the excuse for the hall of fame), and the leaderboard tallies it up.
+## What's in it
 
-## Features
-
-- **Import from WhatsApp** – paste the group message as-is (`*ביצועים*`, `*מי תירוצים*`, `*מי יהיה ביצועים (הימורים)*`, lines like `* מייקל - …`). Members, goals, picks and reasons are parsed, and you can fix anything in a preview before saving.
-- **Copy back to WhatsApp** – one button produces the formatted message for the group.
-- **Week view** with a tab per section, inline editing, and a tally of who's most doubted / most backed.
-- **Results** per member, showing who doubted and who backed them.
-- **Leaderboard** with points, prediction accuracy, streaks, awards (מלך הביצועים, מלך התירוצים, הנביא…) and the **היכל התירוצים**.
-- Shared by the whole team: one small Node server backed by **Postgres**. Optional team passcode.
+- **Weeks** — the current week is the working page: goals, predictions, outcomes, excuses and notes, all
+  edited in place. Past weeks stay browsable; closing a week locks goals and outcomes but notes stay editable.
+- **People** — one page per person with their full history: every goal, outcome and excuse, the calls and
+  bets they made (and whether they were right), and what others predicted about them and why.
+- **Search** — across every goal, excuse, reason and note. Add a name to narrow it: `אלי ריצה`.
+- **Standings** — points, completion rate, prediction accuracy, and a week-by-week grid.
+- **WhatsApp import/export** — paste the group's message (`*ביצועים*`, `*מי תירוצים*`,
+  `*מי יהיה ביצועים (הימורים)*`, lines like `* name - text`) and review before saving; copy any week back
+  out in the same format.
 
 ### Scoring
 

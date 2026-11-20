@@ -1,52 +1,57 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, UnauthorizedError } from './api.ts';
-import type { AppState, Entry, EntryPatch } from '../shared/types.ts';
+import { emptyEntry, type AppState, type Entry, type EntryPatch, type Member, type Week, type WeekPatch } from '../shared/types.ts';
 
-export type Status = 'loading' | 'ready' | 'locked' | 'error';
+export type Status = 'loading' | 'ready' | 'locked' | 'offline';
 
-export function useAppState() {
+const POLL_MS = 15_000;
+
+function isEditing() {
+  const el = document.activeElement;
+  return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
+}
+
+export function useAppStore() {
   const [state, setState] = useState<AppState>({ members: [], weeks: [], entries: [] });
   const [status, setStatus] = useState<Status>('loading');
   const [error, setError] = useState('');
-  const busy = useRef(0);
+  /** Number of writes in flight; polling results are dropped while > 0 so they can't undo optimistic edits. */
+  const pending = useRef(0);
 
   const reload = useCallback(async () => {
     try {
-      const s = await api.state();
-      if (busy.current === 0) setState(s);
+      const next = await api.state();
+      if (pending.current === 0) setState(next);
       setStatus('ready');
     } catch (e) {
       if (e instanceof UnauthorizedError) setStatus('locked');
-      else {
-        setError((e as Error).message);
-        setStatus((s) => (s === 'ready' ? s : 'error'));
-      }
+      else setStatus((s) => (s === 'ready' ? s : 'offline'));
     }
   }, []);
 
   useEffect(() => {
     reload();
-    // Keep teammates' edits flowing in, but never while someone is typing.
-    const t = setInterval(() => {
-      const el = document.activeElement;
-      const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
-      if (document.visibilityState === 'visible' && !typing) reload();
-    }, 15000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible' && !isEditing()) reload();
+    }, POLL_MS);
+    return () => clearInterval(timer);
   }, [reload]);
 
-  /** Run a mutation, then refresh from the server. */
-  const run = useCallback(
-    async (fn: () => Promise<unknown>) => {
-      busy.current++;
+  /** Apply an optional optimistic update, run the request, then resync with the server. */
+  const mutate = useCallback(
+    async <T,>(request: () => Promise<T>, optimistic?: (s: AppState) => AppState): Promise<T | undefined> => {
+      if (optimistic) setState(optimistic);
+      pending.current++;
       try {
-        await fn();
+        const result = await request();
         setError('');
+        return result;
       } catch (e) {
         if (e instanceof UnauthorizedError) setStatus('locked');
         else setError((e as Error).message);
+        return undefined;
       } finally {
-        busy.current--;
+        pending.current--;
         await reload();
       }
     },
@@ -54,25 +59,70 @@ export function useAppState() {
   );
 
   const patchEntry = useCallback(
-    (weekId: number, memberId: number, patch: EntryPatch) => {
-      // Optimistic, so typing and clicking feel instant.
-      setState((s) => {
-        const exists = s.entries.some((e) => e.weekId === weekId && e.memberId === memberId);
-        const base: Entry = {
-          weekId, memberId, goal: '', outcome: 'pending', excuse: '',
-          excusePickId: null, excuseReason: '', betPickId: null, betReason: '',
-        };
-        const entries = exists
-          ? s.entries.map((e) => (e.weekId === weekId && e.memberId === memberId ? { ...e, ...patch } : e))
-          : [...s.entries, { ...base, ...patch }];
-        return { ...s, entries };
-      });
-      return run(() => api.updateEntry(weekId, memberId, patch));
-    },
-    [run],
+    (weekId: number, memberId: number, patch: EntryPatch) =>
+      mutate(
+        () => api.updateEntry(weekId, memberId, patch),
+        (s) => {
+          const exists = s.entries.some((e) => e.weekId === weekId && e.memberId === memberId);
+          const entries: Entry[] = exists
+            ? s.entries.map((e) => (e.weekId === weekId && e.memberId === memberId ? { ...e, ...patch } : e))
+            : [...s.entries, { ...emptyEntry(weekId, memberId), ...patch }];
+          return { ...s, entries };
+        },
+      ),
+    [mutate],
   );
 
-  return { state, status, error, setError, reload, run, patchEntry };
+  const patchWeek = useCallback(
+    (id: number, patch: WeekPatch) =>
+      mutate(
+        () => api.updateWeek(id, patch),
+        (s) => ({ ...s, weeks: s.weeks.map((w) => (w.id === id ? { ...w, ...patch } : w)) }),
+      ),
+    [mutate],
+  );
+
+  const lookup = useMemo(() => buildLookup(state), [state]);
+
+  return { state, lookup, status, error, dismissError: () => setError(''), reload, mutate, patchEntry, patchWeek };
 }
 
-export type Store = ReturnType<typeof useAppState>;
+export interface Lookup {
+  member: Map<number, Member>;
+  name: (id: number | null | undefined) => string;
+  week: Map<number, Week>;
+  /** Newest first. */
+  weeks: Week[];
+  entriesByWeek: Map<number, Entry[]>;
+  entriesByMember: Map<number, Entry[]>;
+}
+
+function buildLookup(state: AppState): Lookup {
+  const member = new Map(state.members.map((m) => [m.id, m]));
+  const weeks = [...state.weeks].sort((a, b) => b.startDate.localeCompare(a.startDate) || b.id - a.id);
+  const entriesByWeek = new Map<number, Entry[]>();
+  const entriesByMember = new Map<number, Entry[]>();
+  for (const e of state.entries) {
+    if (!member.has(e.memberId)) continue;
+    (entriesByWeek.get(e.weekId) ?? entriesByWeek.set(e.weekId, []).get(e.weekId)!).push(e);
+    (entriesByMember.get(e.memberId) ?? entriesByMember.set(e.memberId, []).get(e.memberId)!).push(e);
+  }
+  return {
+    member,
+    name: (id) => (id == null ? '' : member.get(id)?.name ?? 'Unknown'),
+    week: new Map(state.weeks.map((w) => [w.id, w])),
+    weeks,
+    entriesByWeek,
+    entriesByMember,
+  };
+}
+
+export type Store = ReturnType<typeof useAppStore>;
+
+export const StoreContext = createContext<Store | null>(null);
+
+export function useStore(): Store {
+  const store = useContext(StoreContext);
+  if (!store) throw new Error('useStore outside StoreContext');
+  return store;
+}
