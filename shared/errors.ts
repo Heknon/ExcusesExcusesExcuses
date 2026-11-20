@@ -3,13 +3,8 @@
  * English text below; clients translate by code and fall back to the text.
  */
 export const ERRORS = {
-  invalid_email: 'Enter a valid email address',
   name_required: 'Enter a name',
   name_too_long: 'Name is too long',
-  password_too_short: 'Password must be at least 8 characters',
-  too_many_attempts: 'Too many attempts. Try again in a few minutes.',
-  email_taken: 'An account with this email already exists',
-  wrong_credentials: 'Wrong email or password',
   invalid_locale: 'Unsupported language',
   already_exists: 'That already exists',
   unknown_reference: 'Unknown player or round',
@@ -49,6 +44,9 @@ export const ERRORS = {
   proof_limit: 'That’s the maximum number of photos for one round',
   proof_phase: 'Proof can be added once the week has started',
   proof_not_found: 'Photo not found',
+  proof_upload_missing: 'The photo didn’t arrive. Try adding it again.',
+  proof_upload_failed: 'The photo didn’t upload. Check your connection and try again.',
+  storage_unavailable: 'Photos aren’t available right now. Try again later.',
   server_error: 'Something went wrong',
   goal_required: 'Add at least one goal',
   too_many_goals: 'That’s more goals than a round allows',

@@ -21,6 +21,8 @@ import {
 } from '../shared/types.ts';
 import { combineOutcomes } from '../shared/scoring.ts';
 import { friendly, HttpError, transaction, type Pool, type Queryable } from './db.ts';
+import type { PhotoStore } from './storage.ts';
+import type { ErrorCode } from '../shared/errors.ts';
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const newInviteCode = () => Array.from({ length: 6 }, () => INVITE_ALPHABET[randomInt(INVITE_ALPHABET.length)]).join('');
@@ -102,8 +104,9 @@ function parseDeadline(value: unknown, startDate: string): string {
   return new Date(t).toISOString();
 }
 
-export const PROOF_MAX_BYTES = 4 * 1024 * 1024; // under Vercel's 4.5 MB request limit
+export const PROOF_MAX_BYTES = 4 * 1024 * 1024;
 const PROOFS_PER_ENTRY = 6;
+const PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 /** Identify an image by its first bytes, never by what the client claims. */
 export function sniffImage(buf: Buffer): string | null {
@@ -122,7 +125,34 @@ const LIMITS: Partial<Record<EntryField, number>> = {
   betReason: 500,
 };
 
-export function gameService(pool: Pool) {
+export function gameService(pool: Pool, photos: PhotoStore | null) {
+  function photoStore(): PhotoStore {
+    if (!photos) throw new HttpError(503, 'storage_unavailable');
+    return photos;
+  }
+
+  /** Delete rows that cascade to proofs, then the photos they pointed at. */
+  async function deleteWithPhotos(keysSql: string, deleteSql: string, params: unknown[]) {
+    const { rows } = await pool.query<{ object_key: string }>(keysSql, params);
+    await pool.query(deleteSql, params);
+    const keys = rows.map((r) => r.object_key);
+    if (keys.length && photos) await photos.remove(keys);
+  }
+
+  /** Who may add a photo to an entry: the player themselves, or an admin, once the week has started. */
+  async function proofTarget(user: User, gameId: number, roundId: number, playerId: number) {
+    const me = await seat(pool, user.id, gameId);
+    const round = await roundInGame(pool, gameId, roundId);
+    const target = await playerInGame(pool, gameId, playerId);
+    if (target.id !== me.id && me.role !== 'admin') throw new HttpError(403, 'own_entry_only');
+    if (isPrePlay(round.status)) throw new HttpError(400, 'proof_phase');
+  }
+
+  async function proofCount(q: Queryable, roundId: number, playerId: number): Promise<number> {
+    const { rows } = await q.query('SELECT count(*)::int AS n FROM proofs WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
+    return rows[0].n;
+  }
+
   /** The caller's seat in a game, or 403/404. */
   async function seat(q: Queryable, userId: number, gameId: number, opts: { admin?: boolean } = {}): Promise<PlayerRow> {
     const { rows } = await q.query<PlayerRow>('SELECT * FROM players WHERE game_id = $1 AND user_id = $2', [gameId, userId]);
@@ -342,7 +372,11 @@ export function gameService(pool: Pool) {
 
     async remove(userId: number, gameId: number) {
       await seat(pool, userId, gameId, { admin: true });
-      await pool.query('DELETE FROM games WHERE id = $1', [gameId]);
+      await deleteWithPhotos(
+        `SELECT pr.object_key FROM proofs pr JOIN rounds r ON r.id = pr.round_id WHERE r.game_id = $1 AND pr.object_key IS NOT NULL`,
+        'DELETE FROM games WHERE id = $1',
+        [gameId],
+      );
     },
 
     async addGuest(userId: number, gameId: number, input: { name?: unknown }) {
@@ -504,7 +538,11 @@ export function gameService(pool: Pool) {
     async deleteRound(userId: number, gameId: number, roundId: number) {
       await seat(pool, userId, gameId, { admin: true });
       await roundInGame(pool, gameId, roundId);
-      await pool.query('DELETE FROM rounds WHERE id = $1', [roundId]);
+      await deleteWithPhotos(
+        'SELECT object_key FROM proofs WHERE round_id = $1 AND object_key IS NOT NULL',
+        'DELETE FROM rounds WHERE id = $1',
+        [roundId],
+      );
     },
 
     async updateEntry(userId: number, gameId: number, roundId: number, playerId: number, patch: EntryPatch) {
@@ -634,40 +672,64 @@ export function gameService(pool: Pool) {
       });
     },
 
-    /** Attach a photo to an entry. The player themselves, or an admin, once the week has started. */
-    async addProof(user: User, gameId: number, roundId: number, playerId: number, bytes: Buffer): Promise<Proof> {
-      const me = await seat(pool, user.id, gameId);
-      const round = await roundInGame(pool, gameId, roundId);
-      const target = await playerInGame(pool, gameId, playerId);
-      if (target.id !== me.id && me.role !== 'admin') throw new HttpError(403, 'own_entry_only');
-      if (isPrePlay(round.status)) throw new HttpError(400, 'proof_phase');
-      if (bytes.length > PROOF_MAX_BYTES) throw new HttpError(413, 'proof_too_large');
-      const mime = sniffImage(bytes);
-      if (!mime) throw new HttpError(415, 'proof_not_image');
+    /** Step one of adding a photo: a presigned URL the browser uploads it to. */
+    async startProofUpload(user: User, gameId: number, roundId: number, playerId: number, input: { type?: unknown }) {
+      await proofTarget(user, gameId, roundId, playerId);
+      const type = String(input.type ?? '');
+      if (!PROOF_TYPES.includes(type)) throw new HttpError(415, 'proof_not_image');
+      const entry = await pool.query('SELECT 1 FROM round_entries WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
+      if (!entry.rows.length) throw new HttpError(404, 'player_not_found');
+      if ((await proofCount(pool, roundId, playerId)) >= PROOFS_PER_ENTRY) throw new HttpError(400, 'proof_limit');
+      const store = photoStore();
+      const key = store.newKey(roundId, playerId);
+      return { key, url: await store.uploadUrl(key, type), headers: { 'content-type': type }, maxBytes: PROOF_MAX_BYTES };
+    },
+
+    /** Step two: check what was uploaded is really an image of an allowed size, then attach it. */
+    async finishProofUpload(user: User, gameId: number, roundId: number, playerId: number, input: { key?: unknown }): Promise<Proof> {
+      await proofTarget(user, gameId, roundId, playerId);
+      const store = photoStore();
+      const key = String(input.key ?? '');
+      if (!store.ownsKey(key, roundId, playerId)) throw new HttpError(400, 'proof_upload_missing');
+      const size = await store.size(key);
+      if (size == null) throw new HttpError(400, 'proof_upload_missing');
+      const reject = async (status: number, code: ErrorCode): Promise<never> => {
+        await store.remove([key]);
+        throw new HttpError(status, code);
+      };
+      if (size > PROOF_MAX_BYTES) await reject(413, 'proof_too_large');
+      const mime = sniffImage(await store.head(key, 12));
+      if (!mime) return reject(415, 'proof_not_image');
       return transaction(pool, async (c) => {
         const entry = await c.query('SELECT 1 FROM round_entries WHERE round_id = $1 AND player_id = $2 FOR UPDATE', [roundId, playerId]);
         if (!entry.rows.length) throw new HttpError(404, 'player_not_found');
-        const { rows: count } = await c.query('SELECT count(*)::int AS n FROM proofs WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
-        if (count[0].n >= PROOFS_PER_ENTRY) throw new HttpError(400, 'proof_limit');
-        const { rows } = await c.query(
-          'INSERT INTO proofs (round_id, player_id, uploaded_by, mime, bytes) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
-          [roundId, playerId, user.id, mime, bytes],
-        );
+        if ((await proofCount(c, roundId, playerId)) >= PROOFS_PER_ENTRY) await reject(400, 'proof_limit');
+        const { rows } = await c
+          .query(
+            'INSERT INTO proofs (round_id, player_id, uploaded_by, mime, object_key) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at',
+            [roundId, playerId, user.id, mime, key],
+          )
+          .catch(friendly);
         return { id: rows[0].id, createdAt: rows[0].created_at.toISOString() };
       });
     },
 
-    /** A proof's bytes, for anyone seated in its game. */
-    async proof(userId: number, proofId: number) {
+    /**
+     * Where to read a proof, for anyone seated in its game: a short-lived URL in the photo store,
+     * or the bytes themselves for photos not yet moved out of the database.
+     */
+    async proof(userId: number, proofId: number): Promise<{ mime: string; url: string } | { mime: string; bytes: Buffer }> {
       const { rows } = await pool.query(
-        `SELECT pr.mime, pr.bytes, r.game_id FROM proofs pr JOIN rounds r ON r.id = pr.round_id WHERE pr.id = $1`,
+        `SELECT pr.mime, pr.object_key, pr.bytes, r.game_id FROM proofs pr JOIN rounds r ON r.id = pr.round_id WHERE pr.id = $1`,
         [proofId],
       );
       if (!rows[0]) throw new HttpError(404, 'proof_not_found');
       await seat(pool, userId, rows[0].game_id).catch(() => {
         throw new HttpError(404, 'proof_not_found');
       });
-      return { mime: rows[0].mime as string, bytes: rows[0].bytes as Buffer };
+      const mime = rows[0].mime as string;
+      if (rows[0].object_key) return { mime, url: await photoStore().downloadUrl(rows[0].object_key, mime) };
+      return { mime, bytes: rows[0].bytes as Buffer };
     },
 
     async deleteProof(userId: number, proofId: number) {
@@ -681,13 +743,21 @@ export function gameService(pool: Pool) {
       });
       const allowed = me.role === 'admin' || me.id === rows[0].player_id || rows[0].uploaded_by === userId;
       if (!allowed) throw new HttpError(403, 'own_entry_only');
-      await pool.query('DELETE FROM proofs WHERE id = $1', [proofId]);
+      await deleteWithPhotos(
+        'SELECT object_key FROM proofs WHERE id = $1 AND object_key IS NOT NULL',
+        'DELETE FROM proofs WHERE id = $1',
+        [proofId],
+      );
     },
 
     async removeEntry(userId: number, gameId: number, roundId: number, playerId: number) {
       await seat(pool, userId, gameId, { admin: true });
       await roundInGame(pool, gameId, roundId);
-      await pool.query('DELETE FROM round_entries WHERE round_id = $1 AND player_id = $2', [roundId, playerId]);
+      await deleteWithPhotos(
+        'SELECT object_key FROM proofs WHERE round_id = $1 AND player_id = $2 AND object_key IS NOT NULL',
+        'DELETE FROM round_entries WHERE round_id = $1 AND player_id = $2',
+        [roundId, playerId],
+      );
     },
 
     /**

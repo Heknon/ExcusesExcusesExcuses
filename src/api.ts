@@ -1,3 +1,4 @@
+import { ERRORS } from '../shared/errors.ts';
 import type { EntryPatch, GameState, Locale, Me, Player, Proof, Round, RoundPatch, User } from '../shared/types.ts';
 
 export class ApiError extends Error {
@@ -26,12 +27,27 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T;
 }
 
-async function uploadImage<T>(path: string, blob: Blob): Promise<T> {
-  const res = await fetch(`/api${path}`, { method: 'POST', headers: { 'content-type': blob.type || 'image/jpeg' }, body: blob });
+/** POST an Auth.js action with its CSRF token; Auth.js answers with the URL to go to next. */
+async function authAction(action: string, form: Record<string, string>): Promise<string> {
+  const csrf = await fetch('/api/auth/csrf').then((r) => r.json()).catch(() => ({}));
+  const res = await fetch(`/api/auth/${action}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-auth-return-redirect': '1' },
+    body: new URLSearchParams({ ...form, csrfToken: csrf.csrfToken ?? '' }),
+  });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) onSignedOut.dispatchEvent(new Event('signedout'));
-  if (!res.ok) throw new ApiError(res.status, data.error ?? `Upload failed (${res.status})`, data.code);
-  return data as T;
+  if (!res.ok || typeof data.url !== 'string') throw new ApiError(res.status, ERRORS.server_error, 'server_error');
+  return data.url;
+}
+
+async function addProof(gameId: number, roundId: number, playerId: number, image: Blob): Promise<Proof> {
+  const entry = `/games/${gameId}/rounds/${roundId}/entries/${playerId}/proofs`;
+  const upload = await call<{ key: string; url: string; headers: Record<string, string> }>('POST', `${entry}/uploads`, {
+    type: image.type || 'image/jpeg',
+  });
+  const put = await fetch(upload.url, { method: 'PUT', headers: upload.headers, body: image }).catch(() => null);
+  if (!put?.ok) throw new ApiError(put?.status ?? 0, ERRORS.proof_upload_failed, 'proof_upload_failed');
+  return call<Proof>('POST', entry, { key: upload.key });
 }
 
 export interface ImportRow {
@@ -44,9 +60,8 @@ export interface ImportRow {
 }
 
 export const api = {
-  signup: (input: { email: string; name: string; password: string; locale: Locale }) => call<{ user: User }>('POST', '/auth/signup', input),
-  login: (input: { email: string; password: string }) => call<{ user: User }>('POST', '/auth/login', input),
-  logout: () => call('POST', '/auth/logout'),
+  signInWithGoogle: async (next: string) => location.assign(await authAction('signin/google', { callbackUrl: next })),
+  signOut: () => authAction('signout', { callbackUrl: '/' }),
   me: () => call<Me>('GET', '/me'),
   updateProfile: (input: { name?: string; locale?: Locale }) => call<User>('PATCH', '/me', input),
 
@@ -78,8 +93,7 @@ export const api = {
   removeEntry: (gameId: number, roundId: number, playerId: number) =>
     call('DELETE', `/games/${gameId}/rounds/${roundId}/entries/${playerId}`),
 
-  addProof: (gameId: number, roundId: number, playerId: number, image: Blob) =>
-    uploadImage<Proof>(`/games/${gameId}/rounds/${roundId}/entries/${playerId}/proofs`, image),
+  addProof,
   deleteProof: (proofId: number) => call('DELETE', `/proofs/${proofId}`),
   proofUrl: (proofId: number) => `/api/proofs/${proofId}`,
 };

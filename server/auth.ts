@@ -1,106 +1,109 @@
-import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
+import { Auth, type AuthConfig } from '@auth/core';
+import { getToken } from '@auth/core/jwt';
+import Google from '@auth/core/providers/google';
 import { HttpError, type Pool } from './db.ts';
 import { LOCALES, type Locale, type User } from '../shared/types.ts';
 
-const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
-
-export const SESSION_COOKIE = 'eee_session';
+export const AUTH_BASE_PATH = '/api/auth';
 export const SESSION_DAYS = 60;
-
-export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16);
-  const key = await scrypt(password, salt, 64);
-  return `scrypt$${salt.toString('base64')}$${key.toString('base64')}`;
-}
-
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [scheme, salt, key] = stored.split('$');
-  if (scheme !== 'scrypt' || !salt || !key) return false;
-  const expected = Buffer.from(key, 'base64');
-  const actual = await scrypt(password, Buffer.from(salt, 'base64'), expected.length);
-  return timingSafeEqual(actual, expected);
-}
-
-const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
-
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function validate(input: { email?: unknown; password?: unknown; name?: unknown }, needName: boolean) {
-  const email = String(input.email ?? '').trim().toLowerCase();
-  const password = String(input.password ?? '');
-  const name = String(input.name ?? '').trim();
-  if (!EMAIL.test(email)) throw new HttpError(400, 'invalid_email');
-  if (needName && !name) throw new HttpError(400, 'name_required');
-  if (needName && name.length > 40) throw new HttpError(400, 'name_too_long');
-  if (password.length < 8) throw new HttpError(400, 'password_too_short');
-  return { email, password, name };
-}
-
-/** Small in-memory brake on password guessing: 10 failures per email per 15 minutes. */
-const failures = new Map<string, { count: number; until: number }>();
-function checkThrottle(email: string) {
-  const f = failures.get(email);
-  if (f && f.until > Date.now() && f.count >= 10) throw new HttpError(429, 'too_many_attempts');
-}
-function recordFailure(email: string) {
-  const f = failures.get(email);
-  const fresh = !f || f.until < Date.now();
-  failures.set(email, { count: fresh ? 1 : f.count + 1, until: fresh ? Date.now() + 15 * 60_000 : f.until });
-}
+const NAME_MAX = 40;
 
 const toUser = (r: any): User => ({ id: r.id, email: r.email, name: r.name, locale: r.locale ?? null });
 
+/** The email of a Google profile, only when Google has verified it. */
+export function verifiedEmail(profile: unknown): string | null {
+  const p = profile as { email?: unknown; email_verified?: unknown } | null | undefined;
+  if (p?.email_verified !== true || typeof p.email !== 'string') return null;
+  return p.email.trim().toLowerCase() || null;
+}
+
+function displayName(profile: { name?: unknown } | null | undefined, email: string): string {
+  const name = typeof profile?.name === 'string' ? profile.name.trim() : '';
+  return (name || email.split('@')[0]).slice(0, NAME_MAX);
+}
+
+function toHeaders(raw: IncomingHttpHeaders): Headers {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(raw)) {
+    if (Array.isArray(v)) for (const item of v) headers.append(k, item);
+    else if (v != null) headers.set(k, v);
+  }
+  return headers;
+}
+
+/** The public origin of a request: AUTH_URL when set, otherwise what the proxy in front of us reports. */
+export function requestOrigin(req: IncomingMessage): string {
+  if (process.env.AUTH_URL) return new URL(process.env.AUTH_URL).origin;
+  const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)?.split(',')[0].trim();
+  const host = first(req.headers['x-forwarded-host']) ?? req.headers.host ?? 'localhost';
+  const proto = first(req.headers['x-forwarded-proto']) ?? 'http';
+  return `${proto}://${host}`;
+}
+
 export function authService(pool: Pool) {
-  async function createSession(userId: number): Promise<string> {
-    const token = randomBytes(32).toString('base64url');
-    await pool.query(
-      `INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + make_interval(days => $3))`,
-      [sha256(token), userId, SESSION_DAYS],
+  /** The account for a Google profile with a verified email: the existing one with that email, or a new one. */
+  async function accountFor(profile: unknown): Promise<number | null> {
+    const email = verifiedEmail(profile);
+    if (!email) return null;
+    const { rows } = await pool.query(
+      `INSERT INTO users (email, name) VALUES ($1, $2)
+       ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+       RETURNING id`,
+      [email, displayName(profile as { name?: unknown }, email)],
     );
-    return token;
+    return rows[0].id;
   }
 
+  const config: AuthConfig = {
+    basePath: AUTH_BASE_PATH,
+    secret: process.env.AUTH_SECRET || undefined,
+    trustHost: true,
+    redirectProxyUrl: process.env.AUTH_REDIRECT_PROXY_URL || undefined,
+    providers: [Google({ clientId: process.env.AUTH_GOOGLE_ID, clientSecret: process.env.AUTH_GOOGLE_SECRET })],
+    session: { strategy: 'jwt', maxAge: SESSION_DAYS * 86400 },
+    pages: { signIn: '/login', error: '/login' },
+    callbacks: {
+      signIn: ({ account, profile }) => account?.provider === 'google' && verifiedEmail(profile) !== null,
+      async jwt({ token, profile }) {
+        if (profile) token.uid = await accountFor(profile);
+        return token;
+      },
+    },
+  };
+
   return {
-    async signup(input: { email?: unknown; password?: unknown; name?: unknown; locale?: unknown }) {
-      const { email, password, name } = validate(input, true);
-      const locale = LOCALES.includes(input.locale as Locale) ? (input.locale as Locale) : null;
-      const hash = await hashPassword(password);
-      const { rows } = await pool
-        .query('INSERT INTO users (email, name, password_hash, locale) VALUES ($1, $2, $3, $4) RETURNING *', [email, name, hash, locale])
-        .catch((err) => {
-          if (err?.code === '23505') throw new HttpError(409, 'email_taken');
-          throw err;
-        });
-      const user = toUser(rows[0]);
-      return { user, token: await createSession(user.id) };
+    accountFor,
+
+    /** Serve /api/auth/* (sign-in, Google callback, sign-out, CSRF) through Auth.js. */
+    async handle(req: IncomingMessage, res: ServerResponse, body: Buffer) {
+      const method = req.method ?? 'GET';
+      const request = new Request(new URL(req.url ?? '/', requestOrigin(req)), {
+        method,
+        headers: toHeaders(req.headers),
+        body: method === 'GET' || method === 'HEAD' ? undefined : new Uint8Array(body),
+      });
+      const response = await Auth(request, config);
+      const headers: Record<string, string | string[]> = {};
+      response.headers.forEach((value, key) => {
+        if (key !== 'set-cookie') headers[key] = value;
+      });
+      const cookies = response.headers.getSetCookie();
+      if (cookies.length) headers['set-cookie'] = cookies;
+      res.writeHead(response.status, headers);
+      res.end(Buffer.from(await response.arrayBuffer()));
     },
 
-    async login(input: { email?: unknown; password?: unknown }) {
-      const email = String(input.email ?? '').trim().toLowerCase();
-      const password = String(input.password ?? '');
-      checkThrottle(email);
-      const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-      const ok = rows[0] && (await verifyPassword(password, rows[0].password_hash));
-      if (!ok) {
-        recordFailure(email);
-        throw new HttpError(401, 'wrong_credentials');
-      }
-      failures.delete(email);
-      const user = toUser(rows[0]);
-      return { user, token: await createSession(user.id) };
-    },
-
-    async logout(token: string) {
-      await pool.query('DELETE FROM sessions WHERE token_hash = $1', [sha256(token)]);
-    },
-
-    async userForToken(token: string | undefined): Promise<User | null> {
-      if (!token) return null;
-      const { rows } = await pool.query(
-        `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()`,
-        [sha256(token)],
-      );
+    async userFor(req: IncomingMessage): Promise<User | null> {
+      if (!process.env.AUTH_SECRET) return null;
+      const token = await getToken({
+        req: { headers: toHeaders(req.headers) },
+        secret: process.env.AUTH_SECRET || undefined,
+        secureCookie: requestOrigin(req).startsWith('https:'),
+      });
+      const uid = token?.uid;
+      if (typeof uid !== 'number') return null;
+      const { rows } = await pool.query('SELECT * FROM users WHERE id = $1', [uid]);
       return rows[0] ? toUser(rows[0]) : null;
     },
 
@@ -109,7 +112,7 @@ export function authService(pool: Pool) {
       if (input.name !== undefined) {
         name = String(input.name ?? '').trim();
         if (!name) throw new HttpError(400, 'name_required');
-        if (name.length > 40) throw new HttpError(400, 'name_too_long');
+        if (name.length > NAME_MAX) throw new HttpError(400, 'name_too_long');
       }
       if (input.locale !== undefined && !LOCALES.includes(input.locale as Locale)) throw new HttpError(400, 'invalid_locale');
       const { rows } = await pool.query(

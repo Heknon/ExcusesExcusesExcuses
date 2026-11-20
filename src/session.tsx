@@ -35,7 +35,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const signOut = useCallback(async () => {
-    await api.logout().catch(() => {});
+    await api.signOut().catch(() => {});
     setState({ status: 'signedOut' });
   }, []);
 

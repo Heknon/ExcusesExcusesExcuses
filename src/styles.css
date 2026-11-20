@@ -406,8 +406,6 @@ select.input { cursor: pointer; }
 .auth-card { width: min(400px, 100%); }
 .auth-card h1 { font-family: var(--font-display); font-size: 32px; font-weight: 800; letter-spacing: var(--display-tracking); }
 .auth-card > .muted { margin: 6px 0 28px; }
-.auth-switch { margin-top: 20px; text-align: center; color: var(--ink-3); font-size: 14px; }
-.auth-switch a { color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- home ---------- */
 .home-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
