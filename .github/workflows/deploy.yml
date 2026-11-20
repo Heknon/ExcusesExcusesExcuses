@@ -1,12 +1,19 @@
+# Managed by project-kit (kit sync). docs: https://github.com/Heknon/project-kit/blob/main/docs/contract.md
+# Pushes to dev deploy dev; pushes to master deploy production.
 name: Deploy
+
 on:
   push:
-    branches: [dev]
+    branches: [dev, master]
     paths-ignore: ["**/*.md", "docs/**"]
   workflow_dispatch:
+
 jobs:
   deploy:
-    uses: Heknon/project-kit/.github/workflows/deploy.yml@main
+    permissions:
+      contents: read
+      id-token: write
+    uses: Heknon/project-kit/.github/workflows/deploy.yml@bc78b9afa59f47dac9d5ca58914e1c22a25ef653 # bc78b9a
     with:
       production-branch: master
     secrets: inherit
