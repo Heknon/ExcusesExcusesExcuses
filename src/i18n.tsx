@@ -173,9 +173,22 @@ const en = {
     changeHint: 'You can change your move until the admin starts the week.',
     planTitle: 'What’s the plan this week?',
     changeTitle: 'Change your move',
-    goal: 'Your goal',
-    goalHint: 'Something specific you can clearly say you did or didn’t do by Saturday.',
+    goal: 'Your goals',
+    goalHint: 'One to five specific things you can clearly say you did or didn’t do by the deadline.',
     goalPlaceholder: 'e.g. Run 5 km on Friday',
+    goalN: (n: number) => `Goal ${n}`,
+    addGoal: 'Add another goal',
+    removeGoal: 'Remove goal',
+    goalsDone: (d: number, n: number) => `${d} of ${n} done`,
+    moreGoals: (n: number) => `+${n} more`,
+    markEach: 'Mark each goal. Your result for the week follows from them.',
+    weekResult: 'Result for the week',
+    deadlineLabel: 'Goals due by',
+    due: (when: string) => `Due ${when}`,
+    timeLeft: (d: string) => `${d} left`,
+    deadlinePassed: 'Deadline passed — time to report',
+    changeDeadline: 'Change deadline',
+    deadlineSaved: 'Deadline updated',
     callTitle: 'Who’ll come back with excuses?',
     callHint: (n: number) => `+${n} if they miss. Nobody sees this until the week starts.`,
     betTitle: 'Who’ll actually deliver?',
@@ -184,24 +197,24 @@ const en = {
     whyCall: 'Why they’ll have excuses',
     whyBet: 'Why they’ll deliver',
     readyHint: 'You can change this until the week starts.',
-    notReadyHint: 'Set a goal and make both picks to lock in.',
+    notReadyHint: 'Add a goal and make both picks to lock in.',
     lockIt: 'Lock it in',
     lockedToast: 'Locked in',
     excusesFrom: 'Excuses from',
     delivering: 'Delivering',
-    goalLabel: 'Goal',
+    goalLabel: 'Goals',
     calledIt: 'Called it',
     wrongCall: 'Wrong call',
 
-    goalThisWeek: 'Your goal this week',
-    noGoalSet: 'No goal set',
+    goalThisWeek: 'Your goals this week',
+    noGoalSet: 'No goals set',
     howDidItGo: 'How did it go?',
     yourResult: 'Your result',
     excuseTitle: 'Let’s hear the excuse',
     excusePlaceholder: 'What got in the way?',
     saved: 'Saved',
     pointsThisRound: 'points this round',
-    yourGoalLine: 'Your goal',
+    yourGoalLine: 'Your goals',
     addNote: 'Add a note for future you',
     yourNotes: 'Your notes',
     notesHint: 'What worked, what didn’t, what to try next time',
@@ -213,7 +226,7 @@ const en = {
     topScore: 'Top score',
 
     deciding: 'Deciding',
-    noGoalYet: 'No goal yet',
+    noGoalYet: 'No goals yet',
     picksHidden: 'Picks hidden',
     doubtedBacked: (d: number, b: number) => `Doubted by ${d} · Backed by ${b}`,
     editEntry: (name: string) => `Edit ${name}’s entry`,
@@ -370,6 +383,7 @@ const en = {
     importCta: (n: number) => `Import ${n} players`,
     roundExists: 'There’s already a round for that week.',
     newGuest: 'new guest',
+    oneGoalPerLine: 'One goal per line.',
     skipped: (n: number) => (n === 1 ? '1 line skipped' : `${n} lines skipped`),
     imported: 'Round imported',
     dangerTitle: 'Leave or delete',
@@ -432,6 +446,11 @@ const en = {
     proof_phase: 'Proof can be added once the week has started',
     proof_not_found: 'Photo not found',
     server_error: 'Something went wrong',
+    goal_required: 'Add at least one goal',
+    too_many_goals: 'That’s more goals than a round allows',
+    outcome_from_goals: 'Report results on each goal',
+    goal_not_found: 'Goal not found',
+    invalid_deadline: 'Invalid deadline',
   } satisfies Record<ErrorCode, string>,
 };
 
@@ -603,9 +622,22 @@ const he: Messages = {
     changeHint: 'אפשר לשנות עד שהמנהל מתחיל את השבוע.',
     planTitle: 'מה התוכנית השבוע?',
     changeTitle: 'שינוי המהלך',
-    goal: 'היעד שלך',
-    goalHint: 'משהו מוגדר, שבשבת יהיה ברור אם בוצע או לא.',
+    goal: 'היעדים שלך',
+    goalHint: 'בין אחד לחמישה דברים מוגדרים, שעד המועד האחרון יהיה ברור אם בוצעו או לא.',
     goalPlaceholder: 'למשל: ריצה של 5 ק״מ ביום שישי',
+    goalN: (n: number) => `יעד ${n}`,
+    addGoal: 'הוספת יעד',
+    removeGoal: 'הסרת היעד',
+    goalsDone: (d: number, n: number) => `${d} מתוך ${n} בוצעו`,
+    moreGoals: (n: number) => `ועוד ${n}`,
+    markEach: 'מסמנים כל יעד, והתוצאה השבועית נקבעת לפיהם.',
+    weekResult: 'התוצאה השבועית',
+    deadlineLabel: 'מועד אחרון',
+    due: (when: string) => `עד ${when}`,
+    timeLeft: (d: string) => `נשארו ${d}`,
+    deadlinePassed: 'המועד עבר — זמן לדווח',
+    changeDeadline: 'שינוי המועד',
+    deadlineSaved: 'המועד עודכן',
     callTitle: 'מי יחזור עם תירוצים?',
     callHint: (n: number) => `+${n} אם לא יבצע. אף אחד לא רואה עד תחילת השבוע.`,
     betTitle: 'מי באמת יבצע?',
@@ -614,24 +646,24 @@ const he: Messages = {
     whyCall: 'למה יהיו תירוצים',
     whyBet: 'למה יבצע',
     readyHint: 'אפשר לשנות עד תחילת השבוע.',
-    notReadyHint: 'כדי לנעול צריך יעד ושתי בחירות.',
+    notReadyHint: 'כדי לנעול צריך לפחות יעד אחד ושתי בחירות.',
     lockIt: 'לנעול',
     lockedToast: 'ננעל',
     excusesFrom: 'תירוצים',
     delivering: 'הימור',
-    goalLabel: 'יעד',
+    goalLabel: 'יעדים',
     calledIt: 'צדקת',
     wrongCall: 'טעות',
 
-    goalThisWeek: 'היעד שלך השבוע',
-    noGoalSet: 'לא נקבע יעד',
+    goalThisWeek: 'היעדים שלך השבוע',
+    noGoalSet: 'לא נקבעו יעדים',
     howDidItGo: 'איך הלך?',
     yourResult: 'התוצאה שלך',
     excuseTitle: 'נשמע את התירוץ',
     excusePlaceholder: 'מה הפריע?',
     saved: 'נשמר',
     pointsThisRound: 'נקודות בסבב',
-    yourGoalLine: 'היעד שלך',
+    yourGoalLine: 'היעדים שלך',
     addNote: 'הוספת הערה לעצמך',
     yourNotes: 'ההערות שלך',
     notesHint: 'מה עבד, מה לא, מה לנסות בפעם הבאה',
@@ -643,7 +675,7 @@ const he: Messages = {
     topScore: 'הניקוד הגבוה',
 
     deciding: 'טרם נעל',
-    noGoalYet: 'עוד אין יעד',
+    noGoalYet: 'עוד אין יעדים',
     picksHidden: 'הבחירות מוסתרות',
     doubtedBacked: (d: number, b: number) => `פקפוקים: ${d} · הימורים: ${b}`,
     editEntry: (name: string) => `עריכה: ${name}`,
@@ -800,6 +832,7 @@ const he: Messages = {
     importCta: (n: number) => `ייבוא ${n} שחקנים`,
     roundExists: 'כבר יש סבב לשבוע הזה.',
     newGuest: 'אורח חדש',
+    oneGoalPerLine: 'יעד אחד בכל שורה.',
     skipped: (n: number) => (n === 1 ? 'שורה אחת דולגה' : `${n} שורות דולגו`),
     imported: 'הסבב יובא',
     dangerTitle: 'עזיבה או מחיקה',
@@ -862,6 +895,11 @@ const he: Messages = {
     proof_phase: 'אפשר להוסיף הוכחה אחרי שהשבוע מתחיל',
     proof_not_found: 'התמונה לא נמצאה',
     server_error: 'משהו השתבש',
+    goal_required: 'צריך להוסיף לפחות יעד אחד',
+    too_many_goals: 'יותר מדי יעדים לסבב אחד',
+    outcome_from_goals: 'מדווחים תוצאה על כל יעד',
+    goal_not_found: 'היעד לא נמצא',
+    invalid_deadline: 'מועד לא תקין',
   },
 };
 
@@ -883,6 +921,7 @@ function formatters(locale: Locale) {
   const dayMonth = new Intl.DateTimeFormat(tag, { month: 'short', day: 'numeric' });
   const dayMonthYear = new Intl.DateTimeFormat(tag, { month: 'short', day: 'numeric', year: 'numeric' });
   const pct = new Intl.NumberFormat(tag, { style: 'percent', maximumFractionDigits: 0 });
+  const deadlineFmt = new Intl.DateTimeFormat(tag, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   return {
     /** "Nov 15 – 21" / "15–21 בנוב׳", with the year when it isn't the current one. */
     weekRange(startIso: string, { year = false } = {}) {
@@ -894,6 +933,22 @@ function formatters(locale: Locale) {
     },
     shortDate: (iso: string) => dayMonth.format(parseIso(iso)),
     percent: (v: number | null) => (v == null ? '—' : pct.format(v)),
+    /** "Sat, Nov 21, 23:59" / "שבת, 21 בנוב׳, 23:59" */
+    deadline: (iso: string) => deadlineFmt.format(new Date(iso)),
+    /** Rough time remaining: "2 days", "5 hours", "20 minutes" (Hebrew uses the dual forms). */
+    duration(ms: number) {
+      const minutes = Math.max(1, Math.round(ms / 60_000));
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+      if (locale === 'he') {
+        if (days >= 1) return days === 1 ? 'יום אחד' : days === 2 ? 'יומיים' : `${days} ימים`;
+        if (hours >= 1) return hours === 1 ? 'שעה' : hours === 2 ? 'שעתיים' : `${hours} שעות`;
+        return minutes === 1 ? 'דקה' : `${minutes} דקות`;
+      }
+      if (days >= 1) return days === 1 ? '1 day' : `${days} days`;
+      if (hours >= 1) return hours === 1 ? '1 hour' : `${hours} hours`;
+      return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+    },
   };
 }
 

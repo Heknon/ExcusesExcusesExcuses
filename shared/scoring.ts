@@ -30,6 +30,18 @@ export interface PlayerStats {
   streak: number;
 }
 
+/**
+ * A player's result for the week from their goals' results:
+ * all done → done, all missed → failed, anything else fully reported → partial.
+ * Stays pending until every goal is reported.
+ */
+export function combineOutcomes(outcomes: Outcome[]): Outcome {
+  if (!outcomes.length || outcomes.some((o) => o === 'pending')) return 'pending';
+  if (outcomes.every((o) => o === 'done')) return 'done';
+  if (outcomes.every((o) => o === 'failed')) return 'failed';
+  return 'partial';
+}
+
 export const isResolved = (o: Outcome | undefined): o is Exclude<Outcome, 'pending'> => !!o && o !== 'pending';
 
 export function ratio(hits: number, total: number): number | null {

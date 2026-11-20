@@ -24,11 +24,20 @@ export function addDays(iso: string, days: number): string {
   return toIsoDate(d);
 }
 
-/** Days left in the round's week, counting today. Zero or less once the week is over. */
-export function daysLeft(startIso: string, today = new Date()): number {
-  const end = parseIso(addDays(startIso, 7));
-  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round((end.getTime() - t.getTime()) / 86_400_000);
+/** Default deadline: the last day of the week (Saturday) at 23:59, local time. */
+export function defaultDeadline(startIso: string): string {
+  const [y, m, d] = startIso.split('-').map(Number);
+  return new Date(y, m - 1, d + 6, 23, 59).toISOString();
+}
+
+/** ISO timestamp ⇄ the value of an <input type="datetime-local"> (local time, minutes). */
+export function toLocalInput(iso: string): string {
+  const d = new Date(iso);
+  return `${toIsoDate(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+export function fromLocalInput(value: string): string | null {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 export function initials(name: string): string {

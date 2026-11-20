@@ -2,12 +2,15 @@
 
 A weekly game for a group of friends. Every round (one week), each player:
 
-1. **Commits** to a goal for the week.
+1. **Commits** to one to five goals for the week.
 2. **Calls excuses** on one player they think won't deliver.
 3. **Bets** on one player they think will.
 
 Calls and bets are secret until the admin starts the week. At the end of the week everyone reports how it
-went (done, partly, missed) along with their excuse, and the round is scored.
+went — done, partly or missed for each goal, plus an excuse — and the round is scored. Each round has a
+deadline the admin sets (by default the end of the week), with a countdown for everyone.
+
+A week's result comes from its goals: all done → done, all missed → missed, anything in between → partly.
 
 Over time the game builds into a record of what everyone set out to do, what happened, and how well the
 group reads each other.

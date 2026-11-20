@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { parseRound } from '../../shared/whatsapp.ts';
 import { api, type ImportRow } from '../api.ts';
-import { addDays, weekStart } from '../format.ts';
+import { MAX_GOALS } from '../../shared/types.ts';
+import { addDays, defaultDeadline, weekStart } from '../format.ts';
 import { useI18n } from '../i18n.tsx';
 import { navigate } from '../router.tsx';
 import { useGame, useSession } from '../session.tsx';
@@ -97,7 +98,12 @@ function ImportRound() {
       r.rows.map((x) => ({
         include: true,
         name: x.name,
-        goal: x.goal,
+        // The group lists several goals on one line, separated by commas.
+        goals: x.goal
+          .split(/[,،]\s*/)
+          .map((g) => g.trim())
+          .filter(Boolean)
+          .slice(0, MAX_GOALS),
         excuseTarget: x.excuse?.target ?? '',
         excuseReason: x.excuse?.reason ?? '',
         betTarget: x.bet?.target ?? '',
@@ -109,7 +115,7 @@ function ImportRound() {
 
   const save = async () => {
     setBusy(true);
-    const round = await run(() => api.importRound(gameId, { startDate, title: '', rows: included }), t.settings.imported);
+    const round = await run(() => api.importRound(gameId, { startDate, deadline: defaultDeadline(startDate), title: '', rows: included }), t.settings.imported);
     setBusy(false);
     if (round) navigate(`/g/${gameId}`);
   };
@@ -159,7 +165,13 @@ function ImportRound() {
                       <input className="input input-name" dir="auto" value={r.name} onChange={(e) => update(i, { name: e.target.value })} aria-label={t.players.guestName} />
                       {!known.includes(r.name) && <span className="muted small">{t.settings.newGuest}</span>}
                     </label>
-                    <AutoTextarea value={r.goal} onChange={(e) => update(i, { goal: e.target.value })} aria-label={t.round.goalLabel} />
+                    <AutoTextarea
+                      value={r.goals.join('\n')}
+                      onChange={(e) => update(i, { goals: e.target.value.split('\n').slice(0, MAX_GOALS) })}
+                      onBlur={() => update(i, { goals: r.goals.map((g) => g.trim()).filter(Boolean) })}
+                      aria-label={t.round.goalLabel}
+                    />
+                    <span className="field-hint">{t.settings.oneGoalPerLine}</span>
                     <div className="import-picks">
                       {(['excuse', 'bet'] as const).map((k) => (
                         <label key={k} className="field">

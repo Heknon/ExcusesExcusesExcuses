@@ -1,4 +1,4 @@
-import type { Entry, Round } from './types.ts';
+import type { Entry, Goal, Round } from './types.ts';
 
 export type SearchField = 'goal' | 'excuse' | 'notes' | 'excuseReason' | 'betReason' | 'roundTitle' | 'roundNotes';
 
@@ -8,9 +8,11 @@ export interface SearchHit {
   round: Round;
   /** Absent for round-level hits. */
   entry?: Entry;
+  /** Set for goal hits. */
+  goal?: Goal;
 }
 
-const ENTRY_FIELDS: SearchField[] = ['goal', 'excuse', 'notes', 'excuseReason', 'betReason'];
+const TEXT_FIELDS = ['excuse', 'notes', 'excuseReason', 'betReason'] as const;
 
 const fold = (s: string) => s.toLocaleLowerCase().normalize('NFKD').replace(/[̀-֑ͯ-ׇ]/g, '');
 
@@ -52,8 +54,11 @@ export function search(
     const round = rounds.get(entry.roundId);
     if (!round) continue;
     const name = playerNames.get(entry.playerId) ?? '';
-    for (const field of ENTRY_FIELDS) {
-      const text = entry[field as keyof Entry] as string;
+    for (const goal of entry.goals) {
+      if (entryMatches(goal.text, name, query)) hits.push({ field: 'goal', text: goal.text, round, entry, goal });
+    }
+    for (const field of TEXT_FIELDS) {
+      const text = entry[field];
       if (text && entryMatches(text, name, query)) hits.push({ field, text, round, entry });
     }
   }

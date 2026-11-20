@@ -75,6 +75,30 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS proofs_entry ON proofs(round_id, player_id);
 
   ALTER TABLE users ADD COLUMN IF NOT EXISTS locale TEXT;
+
+  -- Round deadlines. Rounds from before deadlines existed get the end of their week.
+  ALTER TABLE rounds ADD COLUMN IF NOT EXISTS deadline TIMESTAMPTZ;
+  UPDATE rounds SET deadline = (start_date + 7)::timestamptz - interval '1 minute' WHERE deadline IS NULL;
+
+  -- Several goals per entry, each with its own result.
+  CREATE TABLE IF NOT EXISTS entry_goals (
+    id SERIAL PRIMARY KEY,
+    round_id INTEGER NOT NULL,
+    player_id INTEGER NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    text TEXT NOT NULL,
+    outcome TEXT NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending', 'done', 'partial', 'failed')),
+    FOREIGN KEY (round_id, player_id) REFERENCES round_entries(round_id, player_id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS entry_goals_entry ON entry_goals(round_id, player_id, position);
+
+  -- Move single goals from before multi-goal support into entry_goals (once: the old column is cleared).
+  WITH moved AS (
+    INSERT INTO entry_goals (round_id, player_id, position, text, outcome)
+    SELECT round_id, player_id, 0, goal, outcome FROM round_entries WHERE goal <> ''
+    RETURNING round_id, player_id
+  )
+  UPDATE round_entries e SET goal = '' FROM moved m WHERE e.round_id = m.round_id AND e.player_id = m.player_id;
 `;
 
 // DATE columns as plain 'YYYY-MM-DD' strings, never JS Dates (no timezone shifts).

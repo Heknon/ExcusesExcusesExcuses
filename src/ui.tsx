@@ -8,6 +8,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type ReactNode,
+  type RefCallback,
   type TextareaHTMLAttributes,
 } from 'react';
 import type { Outcome, RoundStatus } from '../shared/types.ts';
@@ -181,15 +182,29 @@ export function PhaseSteps({ status }: { status: RoundStatus }) {
 /* ---------- inputs ---------- */
 
 /** Textarea that grows with its content. */
-export function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  const ref = useRef<HTMLTextAreaElement>(null);
+export function AutoTextarea({
+  ref: outerRef,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: RefCallback<HTMLTextAreaElement> }) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight + 2}px`;
   }, [props.value]);
-  return <textarea ref={ref} rows={1} dir="auto" {...props} className={`input ${props.className ?? ''}`} />;
+  return (
+    <textarea
+      ref={(el) => {
+        ref.current = el;
+        outerRef?.(el);
+      }}
+      rows={1}
+      dir="auto"
+      {...props}
+      className={`input ${props.className ?? ''}`}
+    />
+  );
 }
 
 /** Choose one player from the table by avatar. */

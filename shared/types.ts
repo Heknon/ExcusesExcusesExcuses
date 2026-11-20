@@ -53,15 +53,28 @@ export interface Player {
 export interface Round {
   id: number;
   startDate: string; // YYYY-MM-DD, a Sunday
+  /** When goals are due, ISO timestamp. */
+  deadline: string;
   title: string;
   notes: string;
   status: RoundStatus;
 }
 
+export const MAX_GOALS = 5;
+export const GOAL_MAX_LENGTH = 300;
+
+export interface Goal {
+  id: number;
+  text: string;
+  outcome: Outcome;
+}
+
 export interface Entry {
   roundId: number;
   playerId: number;
-  goal: string;
+  /** In the player's order. */
+  goals: Goal[];
+  /** Derived from the goals' outcomes when there are any (see combineOutcomes). */
   outcome: Outcome;
   /** The player's explanation when the goal wasn't fully met. */
   excuse: string;
@@ -81,9 +94,14 @@ export interface Entry {
 }
 
 export type EntryPatch = Partial<
-  Pick<Entry, 'goal' | 'outcome' | 'excuse' | 'notes' | 'excusePickId' | 'excuseReason' | 'betPickId' | 'betReason' | 'submitted'>
->;
-export type RoundPatch = Partial<Pick<Round, 'title' | 'notes' | 'status' | 'startDate'>>;
+  Pick<Entry, 'outcome' | 'excuse' | 'notes' | 'excusePickId' | 'excuseReason' | 'betPickId' | 'betReason' | 'submitted'>
+> & {
+  /** The full goal list, in order. Goals keep their id (and outcome) when edited; omitted ones are deleted. */
+  goals?: { id?: number; text: string }[];
+  /** Report results per goal, by goal id. */
+  goalOutcomes?: Record<number, Outcome>;
+};
+export type RoundPatch = Partial<Pick<Round, 'title' | 'notes' | 'status' | 'startDate' | 'deadline'>>;
 
 export interface GameState {
   game: Game;
@@ -114,7 +132,7 @@ export function emptyEntry(roundId: number, playerId: number): Entry {
   return {
     roundId,
     playerId,
-    goal: '',
+    goals: [],
     outcome: 'pending',
     excuse: '',
     notes: '',

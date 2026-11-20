@@ -36,7 +36,7 @@ async function uploadImage<T>(path: string, blob: Blob): Promise<T> {
 
 export interface ImportRow {
   name: string;
-  goal: string;
+  goals: string[];
   excuseTarget: string;
   excuseReason: string;
   betTarget: string;
@@ -68,8 +68,8 @@ export const api = {
     input: { action: 'approve' | 'reject' | 'remove' | 'restore' | 'update'; guestId?: number; name?: string; role?: 'admin' | 'player' },
   ) => call<{ id: number }>('PATCH', `/games/${gameId}/players/${playerId}`, input),
 
-  createRound: (gameId: number, startDate: string) => call<Round>('POST', `/games/${gameId}/rounds`, { startDate }),
-  importRound: (gameId: number, input: { startDate: string; title: string; rows: ImportRow[] }) =>
+  createRound: (gameId: number, startDate: string, deadline: string) => call<Round>('POST', `/games/${gameId}/rounds`, { startDate, deadline }),
+  importRound: (gameId: number, input: { startDate: string; deadline: string; title: string; rows: ImportRow[] }) =>
     call<Round>('POST', `/games/${gameId}/rounds/import`, input),
   updateRound: (gameId: number, roundId: number, patch: RoundPatch) => call('PATCH', `/games/${gameId}/rounds/${roundId}`, patch),
   deleteRound: (gameId: number, roundId: number) => call('DELETE', `/games/${gameId}/rounds/${roundId}`),

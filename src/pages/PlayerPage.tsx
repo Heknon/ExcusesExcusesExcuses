@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { computeStats, entryPoints, isResolved, outcomesByPlayer, ratio } from '../../shared/scoring.ts';
 import type { Entry, Round } from '../../shared/types.ts';
 import { useI18n } from '../i18n.tsx';
+import { GoalList } from '../goals.tsx';
 import { ProofStrip } from '../proofs.tsx';
 import { Link } from '../router.tsx';
 import { useGame } from '../session.tsx';
@@ -114,9 +115,13 @@ function TimelineItem({ entry: e, round }: { entry: Entry; round: Round }) {
         {revealed ? <OutcomePill outcome={e.outcome} /> : <Pill icon="clock">{t.phase.planning}</Pill>}
         {round.status === 'final' && <span className="muted small">{t.common.points(entryPoints(e, outcomes))}</span>}
       </header>
-      <p className="timeline-goal" dir="auto">
-        {e.goal || <span className="muted">{t.profile.noGoal}</span>}
-      </p>
+      {e.goals.length ? (
+        <div className="timeline-goals">
+          <GoalList goals={e.goals} showOutcomes={revealed} />
+        </div>
+      ) : (
+        <p className="timeline-goal muted">{t.profile.noGoal}</p>
+      )}
       {e.excuse && (
         <blockquote className="timeline-excuse">
           <span dir="auto">{e.excuse}</span>

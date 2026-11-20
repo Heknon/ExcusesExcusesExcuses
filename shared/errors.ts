@@ -50,6 +50,11 @@ export const ERRORS = {
   proof_phase: 'Proof can be added once the week has started',
   proof_not_found: 'Photo not found',
   server_error: 'Something went wrong',
+  goal_required: 'Add at least one goal',
+  too_many_goals: 'That’s more goals than a round allows',
+  outcome_from_goals: 'Report results on each goal',
+  goal_not_found: 'Goal not found',
+  invalid_deadline: 'Invalid deadline',
 } as const;
 
 export type ErrorCode = keyof typeof ERRORS;

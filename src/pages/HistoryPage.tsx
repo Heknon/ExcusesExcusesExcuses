@@ -117,7 +117,7 @@ function SearchResults({ query }: { query: string }) {
               <Link to={h.round === lookup.current ? `/g/${gameId}` : `/g/${gameId}/rounds/${h.round.id}`} className="muted">
                 {fmt.weekRange(h.round.startDate)}
               </Link>
-              {h.entry && h.field === 'goal' && h.round.status !== 'planning' && <OutcomePill outcome={h.entry.outcome} />}
+              {h.goal && h.round.status !== 'planning' && <OutcomePill outcome={h.goal.outcome} />}
             </div>
             <p className="search-hit-text" dir="auto">
               <Highlight text={h.text} query={query} />

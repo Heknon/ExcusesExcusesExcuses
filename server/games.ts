@@ -9,11 +9,16 @@ import {
   type Player,
   type Proof,
   type Role,
+  type Goal,
+  type Outcome,
+  MAX_GOALS,
+  GOAL_MAX_LENGTH,
   type Round,
   type RoundPatch,
   type RoundStatus,
   type User,
 } from '../shared/types.ts';
+import { combineOutcomes } from '../shared/scoring.ts';
 import { friendly, HttpError, transaction, type Pool, type Queryable } from './db.ts';
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -32,13 +37,20 @@ interface PlayerRow {
   email?: string | null;
 }
 
-const toRound = (r: any): Round => ({ id: r.id, startDate: r.start_date, title: r.title, notes: r.notes, status: r.status });
+const toRound = (r: any): Round => ({
+  id: r.id,
+  startDate: r.start_date,
+  deadline: r.deadline.toISOString(),
+  title: r.title,
+  notes: r.notes,
+  status: r.status,
+});
 
-function toEntry(r: any, hidden: boolean, proofs: Proof[] = []): Entry {
+function toEntry(r: any, hidden: boolean, proofs: Proof[] = [], goals: Goal[] = []): Entry {
   return {
     roundId: r.round_id,
     playerId: r.player_id,
-    goal: r.goal,
+    goals,
     outcome: r.outcome,
     excuse: r.excuse,
     notes: r.notes,
@@ -53,7 +65,6 @@ function toEntry(r: any, hidden: boolean, proofs: Proof[] = []): Entry {
 }
 
 const ENTRY_COLUMNS = {
-  goal: 'goal',
   outcome: 'outcome',
   excuse: 'excuse',
   notes: 'notes',
@@ -68,10 +79,23 @@ const PICKS: EntryField[] = ['excusePickId', 'excuseReason', 'betPickId', 'betRe
 
 /** What a player may change on their own entry in each phase. */
 const SELF_EDITABLE: Record<RoundStatus, EntryField[]> = {
-  planning: ['goal', ...PICKS, 'submitted', 'notes'],
-  live: ['outcome', 'excuse', 'notes'],
+  planning: ['goals', ...PICKS, 'submitted', 'notes'],
+  live: ['goalOutcomes', 'outcome', 'excuse', 'notes'],
   final: ['notes'],
 };
+
+/** A deadline from the client, or the end of the round's week (Saturday 23:59, server time). */
+function parseDeadline(value: unknown, startDate: string): string {
+  if (value == null || value === '') {
+    const end = new Date(`${startDate}T00:00:00`);
+    end.setDate(end.getDate() + 7);
+    end.setMinutes(end.getMinutes() - 1);
+    return end.toISOString();
+  }
+  const t = Date.parse(String(value));
+  if (Number.isNaN(t)) throw new HttpError(400, 'invalid_deadline');
+  return new Date(t).toISOString();
+}
 
 export const PROOF_MAX_BYTES = 5 * 1024 * 1024;
 const PROOFS_PER_ENTRY = 6;
@@ -87,7 +111,6 @@ export function sniffImage(buf: Buffer): string | null {
 }
 
 const LIMITS: Partial<Record<EntryField, number>> = {
-  goal: 500,
   excuse: 1000,
   notes: 4000,
   excuseReason: 500,
@@ -229,7 +252,7 @@ export function gameService(pool: Pool) {
     async state(userId: number, gameId: number): Promise<GameState> {
       const me = await seat(pool, userId, gameId);
       const isAdmin = me.role === 'admin';
-      const [game, players, rounds, entries, proofs] = await Promise.all([
+      const [game, players, rounds, entries, proofs, goals] = await Promise.all([
         pool.query('SELECT * FROM games WHERE id = $1', [gameId]),
         pool.query<PlayerRow>(
           `SELECT p.*, u.email FROM players p LEFT JOIN users u ON u.id = p.user_id
@@ -248,7 +271,17 @@ export function gameService(pool: Pool) {
            FROM proofs pr JOIN rounds r ON r.id = pr.round_id WHERE r.game_id = $1 ORDER BY pr.id`,
           [gameId],
         ),
+        pool.query(
+          `SELECT g.* FROM entry_goals g JOIN rounds r ON r.id = g.round_id WHERE r.game_id = $1 ORDER BY g.position, g.id`,
+          [gameId],
+        ),
       ]);
+      const goalsByEntry = new Map<string, Goal[]>();
+      for (const g of goals.rows) {
+        const key = `${g.round_id}:${g.player_id}`;
+        if (!goalsByEntry.has(key)) goalsByEntry.set(key, []);
+        goalsByEntry.get(key)!.push({ id: g.id, text: g.text, outcome: g.outcome });
+      }
       const proofsByEntry = new Map<string, Proof[]>();
       for (const p of proofs.rows) {
         const key = `${p.round_id}:${p.player_id}`;
@@ -284,6 +317,7 @@ export function gameService(pool: Pool) {
             e,
             roundStatus.get(e.round_id) === 'planning' && e.player_id !== me.id && !(isAdmin && e.is_guest),
             proofsByEntry.get(`${e.round_id}:${e.player_id}`),
+            goalsByEntry.get(`${e.round_id}:${e.player_id}`),
           ),
         ),
       };
@@ -394,18 +428,20 @@ export function gameService(pool: Pool) {
       await pool.query(`UPDATE players SET status = 'removed', role = 'player' WHERE id = $1`, [me.id]);
     },
 
-    async createRound(userId: number, gameId: number, input: { startDate?: unknown; title?: unknown }) {
+    async createRound(userId: number, gameId: number, input: { startDate?: unknown; title?: unknown; deadline?: unknown }) {
       await seat(pool, userId, gameId, { admin: true });
       const startDate = String(input.startDate ?? '');
       if (!ISO_DATE.test(startDate)) throw new HttpError(400, 'invalid_date');
+      const deadline = parseDeadline(input.deadline, startDate);
       return transaction(pool, async (c) => {
         const open = await c.query(`SELECT 1 FROM rounds WHERE game_id = $1 AND status <> 'final'`, [gameId]);
         if (open.rows.length) throw new HttpError(409, 'round_open');
         const { rows } = await c
-          .query('INSERT INTO rounds (game_id, start_date, title) VALUES ($1, $2, $3) RETURNING *', [
+          .query('INSERT INTO rounds (game_id, start_date, title, deadline) VALUES ($1, $2, $3, $4) RETURNING *', [
             gameId,
             startDate,
             String(input.title ?? '').trim(),
+            deadline,
           ])
           .catch((err) => {
             if (err?.code === '23505') throw new HttpError(409, 'round_exists');
@@ -423,7 +459,9 @@ export function gameService(pool: Pool) {
     async updateRound(userId: number, gameId: number, roundId: number, patch: RoundPatch) {
       const me = await seat(pool, userId, gameId);
       const round = await roundInGame(pool, gameId, roundId);
-      const adminOnly = patch.status !== undefined || patch.title !== undefined || patch.startDate !== undefined;
+      const adminOnly =
+        patch.status !== undefined || patch.title !== undefined || patch.startDate !== undefined || patch.deadline !== undefined;
+      const deadline = patch.deadline !== undefined ? parseDeadline(patch.deadline, round.startDate) : null;
       if (adminOnly && me.role !== 'admin') throw new HttpError(403, 'admin_only');
       if (patch.status !== undefined && !ROUND_STATUSES.includes(patch.status)) throw new HttpError(400, 'invalid_status');
       if (patch.startDate !== undefined && !ISO_DATE.test(patch.startDate)) throw new HttpError(400, 'invalid_date');
@@ -436,9 +474,18 @@ export function gameService(pool: Pool) {
         .query(
           `UPDATE rounds SET
              title = COALESCE($3, title), notes = COALESCE($4, notes),
-             status = COALESCE($5, status), start_date = COALESCE($6::date, start_date)
+             status = COALESCE($5, status), start_date = COALESCE($6::date, start_date),
+             deadline = COALESCE($7::timestamptz, deadline)
            WHERE id = $1 AND game_id = $2`,
-          [roundId, gameId, patch.title?.trim() ?? null, patch.notes?.trim().slice(0, 8000) ?? null, patch.status ?? null, patch.startDate ?? null],
+          [
+            roundId,
+            gameId,
+            patch.title?.trim() ?? null,
+            patch.notes?.trim().slice(0, 8000) ?? null,
+            patch.status ?? null,
+            patch.startDate ?? null,
+            deadline,
+          ],
         )
         .catch(friendly);
     },
@@ -454,7 +501,9 @@ export function gameService(pool: Pool) {
       const round = await roundInGame(pool, gameId, roundId);
       const target = await playerInGame(pool, gameId, playerId);
       const isSelf = target.id === me.id;
-      const fields = Object.keys(patch).filter((k) => k in ENTRY_COLUMNS || k === 'submitted') as EntryField[];
+      const fields = Object.keys(patch).filter(
+        (k) => k in ENTRY_COLUMNS || k === 'submitted' || k === 'goals' || k === 'goalOutcomes',
+      ) as EntryField[];
 
       for (const f of fields) {
         if (isSelf && SELF_EDITABLE[round.status].includes(f)) continue;
@@ -465,16 +514,18 @@ export function gameService(pool: Pool) {
         throw new HttpError(403, isSelf ? 'locked_phase' : 'own_entry_only');
       }
 
+      // Validate plain columns up front, before anything is written.
       const sets: string[] = [];
       const values: unknown[] = [roundId, playerId];
       for (const f of fields) {
+        if (f === 'goals' || f === 'goalOutcomes') continue;
         if (f === 'submitted') {
           sets.push(patch.submitted ? 'submitted_at = COALESCE(submitted_at, now())' : 'submitted_at = NULL');
           continue;
         }
         let value: unknown = patch[f];
         if (f === 'outcome') {
-          if (!OUTCOMES.includes(value as any)) throw new HttpError(400, 'invalid_outcome');
+          if (!OUTCOMES.includes(value as Outcome)) throw new HttpError(400, 'invalid_outcome');
         } else if (f === 'excusePickId' || f === 'betPickId') {
           if (value != null) {
             const pick = await playerInGame(pool, gameId, Number(value));
@@ -489,11 +540,75 @@ export function gameService(pool: Pool) {
         values.push(value);
         sets.push(`${ENTRY_COLUMNS[f as keyof typeof ENTRY_COLUMNS]} = $${values.length}`);
       }
-      if (!sets.length) return;
+
+      let goalList: { id?: number; text: string }[] | null = null;
+      if (patch.goals !== undefined) {
+        if (!Array.isArray(patch.goals)) throw new HttpError(400, 'invalid_json');
+        goalList = patch.goals
+          .map((g) => ({ id: g?.id == null ? undefined : Number(g.id), text: String(g?.text ?? '').trim() }))
+          .filter((g) => g.text);
+        if (goalList.length > MAX_GOALS) throw new HttpError(400, 'too_many_goals');
+        if (goalList.some((g) => g.text.length > GOAL_MAX_LENGTH)) throw new HttpError(400, 'too_long');
+      }
+      let goalOutcomes: [number, Outcome][] = [];
+      if (patch.goalOutcomes !== undefined) {
+        if (typeof patch.goalOutcomes !== 'object' || patch.goalOutcomes === null) throw new HttpError(400, 'invalid_json');
+        goalOutcomes = Object.entries(patch.goalOutcomes).map(([id, o]) => [Number(id), o as Outcome]);
+        if (goalOutcomes.some(([, o]) => !OUTCOMES.includes(o))) throw new HttpError(400, 'invalid_outcome');
+      }
 
       await transaction(pool, async (c) => {
         await c.query('INSERT INTO round_entries (round_id, player_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [roundId, playerId]);
-        await c.query(`UPDATE round_entries SET ${sets.join(', ')} WHERE round_id = $1 AND player_id = $2`, values);
+        const { rows: existing } = await c.query<{ id: number }>(
+          'SELECT id FROM entry_goals WHERE round_id = $1 AND player_id = $2 FOR UPDATE',
+          [roundId, playerId],
+        );
+        const existingIds = new Set(existing.map((g) => g.id));
+
+        if (goalList) {
+          // Keep ids (and their results) for goals that were edited; add new ones; drop the rest.
+          const keep = new Set<number>();
+          for (const [position, g] of goalList.entries()) {
+            if (g.id != null && existingIds.has(g.id)) {
+              keep.add(g.id);
+              await c.query('UPDATE entry_goals SET text = $2, position = $3 WHERE id = $1', [g.id, g.text, position]);
+            } else {
+              const { rows } = await c.query(
+                'INSERT INTO entry_goals (round_id, player_id, position, text) VALUES ($1, $2, $3, $4) RETURNING id',
+                [roundId, playerId, position, g.text],
+              );
+              keep.add(rows[0].id);
+            }
+          }
+          const drop = [...existingIds].filter((id) => !keep.has(id));
+          if (drop.length) await c.query('DELETE FROM entry_goals WHERE id = ANY($1::int[])', [drop]);
+          existingIds.clear();
+          keep.forEach((id) => existingIds.add(id));
+        }
+
+        for (const [id, outcome] of goalOutcomes) {
+          if (!existingIds.has(id)) throw new HttpError(404, 'goal_not_found');
+          await c.query('UPDATE entry_goals SET outcome = $2 WHERE id = $1', [id, outcome]);
+        }
+
+        if (patch.outcome !== undefined && existingIds.size > 0) throw new HttpError(400, 'outcome_from_goals');
+        if (patch.submitted && existingIds.size === 0) throw new HttpError(400, 'goal_required');
+
+        if (sets.length) {
+          await c.query(`UPDATE round_entries SET ${sets.join(', ')} WHERE round_id = $1 AND player_id = $2`, values);
+        }
+        // The week's result follows the goals.
+        if (existingIds.size > 0 && (goalList || goalOutcomes.length)) {
+          const { rows: g } = await c.query<{ outcome: Outcome }>(
+            'SELECT outcome FROM entry_goals WHERE round_id = $1 AND player_id = $2',
+            [roundId, playerId],
+          );
+          await c.query('UPDATE round_entries SET outcome = $3 WHERE round_id = $1 AND player_id = $2', [
+            roundId,
+            playerId,
+            combineOutcomes(g.map((x) => x.outcome)),
+          ]);
+        }
       });
     },
 
@@ -563,7 +678,8 @@ export function gameService(pool: Pool) {
       input: {
         startDate?: unknown;
         title?: unknown;
-        rows?: { name: string; goal?: string; excuseTarget?: string; excuseReason?: string; betTarget?: string; betReason?: string }[];
+        rows?: { name: string; goals?: string[]; excuseTarget?: string; excuseReason?: string; betTarget?: string; betReason?: string }[];
+        deadline?: unknown;
       },
     ) {
       await seat(pool, userId, gameId, { admin: true });
@@ -571,6 +687,9 @@ export function gameService(pool: Pool) {
       if (!ISO_DATE.test(startDate)) throw new HttpError(400, 'invalid_date');
       const rows = Array.isArray(input.rows) ? input.rows.filter((r) => r?.name?.trim()) : [];
       if (!rows.length) throw new HttpError(400, 'nothing_to_import');
+      const deadline = parseDeadline(input.deadline, startDate);
+      const goalsOf = (r: (typeof rows)[number]) =>
+        (Array.isArray(r.goals) ? r.goals : []).map((g) => String(g ?? '').trim().slice(0, GOAL_MAX_LENGTH)).filter(Boolean).slice(0, MAX_GOALS);
 
       return transaction(pool, async (c) => {
         const open = await c.query(`SELECT 1 FROM rounds WHERE game_id = $1 AND status <> 'final'`, [gameId]);
@@ -590,10 +709,11 @@ export function gameService(pool: Pool) {
         for (const r of rows) await idFor(r.name);
 
         const { rows: round } = await c
-          .query(`INSERT INTO rounds (game_id, start_date, title, status) VALUES ($1, $2, $3, 'live') RETURNING *`, [
+          .query(`INSERT INTO rounds (game_id, start_date, title, status, deadline) VALUES ($1, $2, $3, 'live', $4) RETURNING *`, [
             gameId,
             startDate,
             String(input.title ?? '').trim(),
+            deadline,
           ])
           .catch((err) => {
             if (err?.code === '23505') throw new HttpError(409, 'round_exists');
@@ -603,20 +723,28 @@ export function gameService(pool: Pool) {
           const pid = await idFor(r.name);
           const excuse = r.excuseTarget?.trim() ? await idFor(r.excuseTarget) : null;
           const bet = r.betTarget?.trim() ? await idFor(r.betTarget) : null;
-          await c.query(
-            `INSERT INTO round_entries (round_id, player_id, goal, excuse_pick_id, excuse_reason, bet_pick_id, bet_reason, submitted_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+          const inserted = await c.query(
+            `INSERT INTO round_entries (round_id, player_id, excuse_pick_id, excuse_reason, bet_pick_id, bet_reason, submitted_at)
+             VALUES ($1, $2, $3, $4, $5, $6, now())
              ON CONFLICT (round_id, player_id) DO NOTHING`,
             [
               round[0].id,
               pid,
-              String(r.goal ?? '').trim(),
               excuse === pid ? null : excuse,
               String(r.excuseReason ?? '').trim(),
               bet === pid ? null : bet,
               String(r.betReason ?? '').trim(),
             ],
           );
+          if (!inserted.rowCount) continue; // the same name twice: keep the first
+          for (const [position, text] of goalsOf(r).entries()) {
+            await c.query('INSERT INTO entry_goals (round_id, player_id, position, text) VALUES ($1, $2, $3, $4)', [
+              round[0].id,
+              pid,
+              position,
+              text,
+            ]);
+          }
         }
         return toRound(round[0]);
       });

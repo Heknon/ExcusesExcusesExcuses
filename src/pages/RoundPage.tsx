@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { entryPoints, isResolved, outcomesByPlayer, POINTS } from '../../shared/scoring.ts';
 import type { Entry, Outcome, Player, Round } from '../../shared/types.ts';
 import { api } from '../api.ts';
-import { addDays, daysLeft, weekStart } from '../format.ts';
+import { addDays, defaultDeadline, fromLocalInput, toLocalInput, weekStart } from '../format.ts';
+import { DeadlineBadge, fromDrafts, GoalList, GoalReporter, GoalsEditor, toDrafts } from '../goals.tsx';
 import { useI18n } from '../i18n.tsx';
 import { ProofStrip, ProofUploader } from '../proofs.tsx';
 import { Link, navigate } from '../router.tsx';
@@ -46,7 +47,6 @@ export function RoundPage({ roundId }: { roundId?: number }) {
     .sort((a, b) => seat(lookup.player.get(a.playerId)) - seat(lookup.player.get(b.playerId)));
   const mine = entries.find((e) => e.playerId === lookup.me.id);
   const isCurrent = round === lookup.current;
-  const left = daysLeft(round.startDate);
 
   return (
     <div className="round">
@@ -77,11 +77,7 @@ export function RoundPage({ roundId }: { roundId?: number }) {
               {round.title}
             </p>
           )}
-          {round.status === 'live' && (
-            <Pill tone="live" icon="clock">
-              {left > 0 ? t.round.daysLeft(left) : t.round.weekOver}
-            </Pill>
-          )}
+          <DeadlineBadge round={round} />
         </div>
         <PhaseSteps status={round.status} />
       </header>
@@ -120,11 +116,18 @@ function StartRoundCard({ first, after }: { first?: boolean; after?: Round }) {
   if (after && suggested < weekStart()) suggested = weekStart();
   while (taken.has(suggested)) suggested = addDays(suggested, 7);
   const [date, setDate] = useState(suggested);
+  const [deadline, setDeadline] = useState(() => toLocalInput(defaultDeadline(suggested)));
+  const [deadlineTouched, setDeadlineTouched] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const changeDate = (d: string) => {
+    setDate(d);
+    if (!deadlineTouched && d) setDeadline(toLocalInput(defaultDeadline(d)));
+  };
 
   const start = async () => {
     setBusy(true);
-    const r = await run(() => api.createRound(gameId, date), t.round.opened);
+    const r = await run(() => api.createRound(gameId, date, fromLocalInput(deadline) ?? defaultDeadline(date)), t.round.opened);
     setBusy(false);
     if (r) navigate(`/g/${gameId}`, { keepScroll: true });
   };
@@ -138,7 +141,19 @@ function StartRoundCard({ first, after }: { first?: boolean; after?: Round }) {
       <div className="start-round-actions">
         <label className="field field-inline">
           <span className="field-label">{t.round.weekOf}</span>
-          <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input type="date" className="input" value={date} onChange={(e) => changeDate(e.target.value)} />
+        </label>
+        <label className="field field-inline">
+          <span className="field-label">{t.round.deadlineLabel}</span>
+          <input
+            type="datetime-local"
+            className="input"
+            value={deadline}
+            onChange={(e) => {
+              setDeadline(e.target.value);
+              setDeadlineTouched(true);
+            }}
+          />
         </label>
         <Button variant="primary" icon="flag" loading={busy} onClick={start}>
           {t.round.open}
@@ -156,7 +171,8 @@ function StartRoundCard({ first, after }: { first?: boolean; after?: Round }) {
 function AdminBar({ round, entries }: { round: Round; entries: Entry[] }) {
   const { gameId, run, lookup } = useGame();
   const { t, fmt } = useI18n();
-  const [confirm, setConfirm] = useState<null | 'live' | 'final' | 'delete'>(null);
+  const [confirm, setConfirm] = useState<null | 'live' | 'final' | 'delete' | 'deadline'>(null);
+  const [deadline, setDeadline] = useState(toLocalInput(round.deadline));
   const locked = entries.filter((e) => e.submitted).length;
   const reported = entries.filter((e) => isResolved(e.outcome)).length;
   const missing = (pred: (e: Entry) => boolean) =>
@@ -191,6 +207,19 @@ function AdminBar({ round, entries }: { round: Round; entries: Entry[] }) {
         </div>
       )}
       <div className="admin-actions">
+        {round.status !== 'final' && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="clock"
+            onClick={() => {
+              setDeadline(toLocalInput(round.deadline));
+              setConfirm('deadline');
+            }}
+          >
+            {t.round.changeDeadline}
+          </Button>
+        )}
         {round.status === 'planning' && (
           <>
             <Button size="sm" variant="ghost" onClick={() => setConfirm('delete')}>
@@ -252,6 +281,34 @@ function AdminBar({ round, entries }: { round: Round; entries: Entry[] }) {
           }
         >
           <p>{t.round.confirmScoreBody(missing((e) => isResolved(e.outcome)))}</p>
+        </Modal>
+      )}
+      {confirm === 'deadline' && (
+        <Modal
+          title={t.round.changeDeadline}
+          onClose={() => setConfirm(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirm(null)}>
+                {t.common.cancel}
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!fromLocalInput(deadline)}
+                onClick={async () => {
+                  setConfirm(null);
+                  await run(() => api.updateRound(gameId, round.id, { deadline: fromLocalInput(deadline)! }), t.round.deadlineSaved);
+                }}
+              >
+                {t.common.save}
+              </Button>
+            </>
+          }
+        >
+          <label className="field">
+            <span className="field-label">{t.round.deadlineLabel}</span>
+            <input type="datetime-local" className="input" value={deadline} onChange={(e) => setDeadline(e.target.value)} autoFocus />
+          </label>
         </Modal>
       )}
       {confirm === 'delete' && (
@@ -320,22 +377,24 @@ function YourMove({ round, entry, entries }: { round: Round; entry: Entry; entri
 function MoveForm({ round, entry, onDone }: { round: Round; entry: Entry; onDone: () => void }) {
   const { gameId, run, lookup } = useGame();
   const { t } = useI18n();
-  const [goal, setGoal] = useState(entry.goal);
+  const [goals, setGoals] = useState(() => toDrafts(entry.goals));
   const [excusePickId, setExcusePick] = useState(entry.excusePickId);
   const [excuseReason, setExcuseReason] = useState(entry.excuseReason);
   const [betPickId, setBetPick] = useState(entry.betPickId);
   const [betReason, setBetReason] = useState(entry.betReason);
   const [busy, setBusy] = useState(false);
+  const goalList = fromDrafts(goals);
 
   const roundPlayers = (lookup.entriesByRound.get(round.id) ?? [])
     .map((e) => lookup.player.get(e.playerId)!)
     .filter((p) => p && p.id !== entry.playerId && p.status === 'active');
-  const ready = goal.trim() && excusePickId != null && betPickId != null;
+  const ready = goalList.length > 0 && excusePickId != null && betPickId != null;
 
   const lockIn = async () => {
     setBusy(true);
     const ok = await run(
-      () => api.updateEntry(gameId, round.id, entry.playerId, { goal, excusePickId, excuseReason, betPickId, betReason, submitted: true }),
+      () =>
+        api.updateEntry(gameId, round.id, entry.playerId, { goals: goalList, excusePickId, excuseReason, betPickId, betReason, submitted: true }),
       t.round.lockedToast,
     );
     setBusy(false);
@@ -359,11 +418,9 @@ function MoveForm({ round, entry, onDone }: { round: Round; entry: Entry; onDone
       <div className="move-step">
         <span className="move-step-num">1</span>
         <div className="move-step-body">
-          <label className="move-step-title" htmlFor="goal">
-            {t.round.goal}
-          </label>
+          <span className="move-step-title">{t.round.goal}</span>
           <p className="move-step-hint">{t.round.goalHint}</p>
-          <AutoTextarea id="goal" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder={t.round.goalPlaceholder} maxLength={500} />
+          <GoalsEditor value={goals} onChange={setGoals} />
         </div>
       </div>
 
@@ -404,7 +461,7 @@ function MoveSummary({ entry }: { entry: Entry }) {
       <div>
         <dt>{t.round.goalLabel}</dt>
         <dd>
-          <span dir="auto">{entry.goal}</span>
+          <GoalList goals={entry.goals} showOutcomes={false} />
         </dd>
       </div>
       <div>
@@ -459,7 +516,9 @@ function ReportResult({ round, entry }: { round: Round; entry: Entry }) {
   const [excuse, setExcuse] = useState(entry.excuse);
   useEffect(() => setExcuse(entry.excuse), [entry.excuse]);
   const needsExcuse = entry.outcome === 'failed' || entry.outcome === 'partial';
+  const doneCount = entry.goals.filter((g) => g.outcome === 'done').length;
 
+  // Entries without goals (e.g. imported empty) report one result for the week.
   const setOutcome = (outcome: Outcome) => {
     const next = entry.outcome === outcome ? 'pending' : outcome;
     patchLocal((s) => ({
@@ -474,30 +533,42 @@ function ReportResult({ round, entry }: { round: Round; entry: Entry }) {
       <header className="move-header">
         <div>
           <p className="eyebrow">{t.round.goalThisWeek}</p>
-          <h3 className="move-title move-goal" dir="auto">
-            {entry.goal || t.round.noGoalSet}
-          </h3>
+          <h3 className="move-title">{t.round.howDidItGo}</h3>
         </div>
       </header>
-      <p className="move-step-title">{t.round.howDidItGo}</p>
-      <div className="outcome-tiles" role="radiogroup" aria-label={t.round.yourResult}>
-        {SETTABLE.map((o) => (
-          <button
-            key={o}
-            type="button"
-            role="radio"
-            aria-checked={entry.outcome === o}
-            className={`outcome-tile is-${o}`}
-            onClick={() => setOutcome(o)}
-          >
-            <span className="outcome-tile-icon">
-              <Icon name={OUTCOME_ICON[o]} size={22} />
-            </span>
-            <span className="outcome-tile-title">{t.outcome[o]}</span>
-            <span className="outcome-tile-hint">{t.common.pointsGain(POINTS[o])}</span>
-          </button>
-        ))}
-      </div>
+
+      {entry.goals.length > 0 ? (
+        <>
+          <p className="move-step-hint">{t.round.markEach}</p>
+          <GoalReporter round={round} entry={entry} />
+          <div className="week-result">
+            <span className="muted small">{t.round.weekResult}</span>
+            <OutcomePill outcome={entry.outcome} />
+            {entry.goals.length > 1 && <span className="muted small">{t.round.goalsDone(doneCount, entry.goals.length)}</span>}
+            {isResolved(entry.outcome) && <span className="week-result-points">{t.common.pointsGain(POINTS[entry.outcome])}</span>}
+          </div>
+        </>
+      ) : (
+        <div className="outcome-tiles" role="radiogroup" aria-label={t.round.yourResult}>
+          {SETTABLE.map((o) => (
+            <button
+              key={o}
+              type="button"
+              role="radio"
+              aria-checked={entry.outcome === o}
+              className={`outcome-tile is-${o}`}
+              onClick={() => setOutcome(o)}
+            >
+              <span className="outcome-tile-icon">
+                <Icon name={OUTCOME_ICON[o]} size={22} />
+              </span>
+              <span className="outcome-tile-title">{t.outcome[o]}</span>
+              <span className="outcome-tile-hint">{t.common.pointsGain(POINTS[o])}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {needsExcuse && (
         <div className="excuse-box">
           <label className="move-step-title" htmlFor="excuse">
@@ -536,11 +607,12 @@ function FinalScore({ entry, entries }: { entry: Entry; entries: Entry[] }) {
         <span className="final-label">{t.round.pointsThisRound}</span>
       </div>
       <ul className="final-breakdown">
-        <li>
+        <li className="final-goals">
           <span>
             {t.round.yourGoalLine} · <span className={`outcome-text is-${entry.outcome}`}>{t.outcome[entry.outcome]}</span>
           </span>
           <b dir="ltr">+{own}</b>
+          {entry.goals.length > 0 && <GoalList goals={entry.goals} showOutcomes />}
         </li>
         <li>
           <span>
@@ -681,9 +753,11 @@ function TableRow(props: {
               </span>
             )}
           </span>
-          <span className={`trow-goal ${e.goal ? '' : 'is-empty'}`} dir="auto">
-            {e.goal || t.round.noGoalYet}
-          </span>
+          {e.goals.length ? (
+            <GoalList goals={e.goals} showOutcomes={scored} limit={open ? undefined : 3} inline />
+          ) : (
+            <span className="trow-goal is-empty">{t.round.noGoalYet}</span>
+          )}
           {e.excuse && scored && (
             <span className="trow-excuse" dir="auto">
               {e.excuse}
@@ -695,7 +769,7 @@ function TableRow(props: {
             <span className="trow-hidden">
               <Icon name="eyeOff" size={14} /> {t.round.picksHidden}
             </span>
-          ) : (
+          ) : e.excusePickId == null && e.betPickId == null ? null : (
             <>
               <MiniPick kind="call" label={t.round.callShort} id={e.excusePickId} verdict={verdict(e.excusePickId, 'failed')} />
               <MiniPick kind="bet" label={t.round.betShort} id={e.betPickId} verdict={verdict(e.betPickId, 'done')} />
@@ -791,7 +865,7 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
   const isGuest = !player?.hasAccount;
   // Before the reveal, an account's picks are theirs alone. Guests' picks are entered by the admin.
   const canPick = round.status !== 'planning' || isGuest;
-  const [goal, setGoal] = useState(entry.goal);
+  const [goals, setGoals] = useState(() => toDrafts(entry.goals));
   const [outcome, setOutcome] = useState<Outcome>(entry.outcome);
   const [excuse, setExcuse] = useState(entry.excuse);
   const [excusePickId, setExcusePick] = useState(entry.excusePickId);
@@ -804,10 +878,15 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
 
   const save = async () => {
     setBusy(true);
+    const goalList = fromDrafts(goals);
     const patch = {
-      goal,
+      goals: goalList,
       ...(canPick ? { excusePickId, betPickId } : {}),
-      ...(round.status === 'planning' ? (isGuest ? { submitted: !!goal.trim() } : {}) : { outcome, excuse }),
+      ...(round.status === 'planning'
+        ? isGuest
+          ? { submitted: goalList.length > 0 }
+          : {}
+        : { excuse, ...(goalList.length === 0 ? { outcome } : {}) }),
     };
     const ok = await run(() => api.updateEntry(gameId, round.id, entry.playerId, patch), t.round.saved);
     setBusy(false);
@@ -838,10 +917,10 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
       }
     >
       {isGuest && round.status === 'planning' && <p className="muted small modal-note">{t.round.guestMove(name)}</p>}
-      <label className="field">
+      <div className="field">
         <span className="field-label">{t.round.goalLabel}</span>
-        <AutoTextarea value={goal} onChange={(e) => setGoal(e.target.value)} />
-      </label>
+        <GoalsEditor value={goals} onChange={setGoals} />
+      </div>
       {canPick ? (
         <>
           <div className="field">
@@ -860,6 +939,12 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
       )}
       {round.status !== 'planning' && (
         <>
+          {entry.goals.length > 0 ? (
+            <div className="field">
+              <span className="field-label">{t.round.result}</span>
+              <GoalReporter round={round} entry={entry} />
+            </div>
+          ) : (
           <div className="field">
             <span className="field-label">{t.round.result}</span>
             <div className="segmented">
@@ -870,6 +955,7 @@ function AdminEntryModal({ round, entry, onClose }: { round: Round; entry: Entry
               ))}
             </div>
           </div>
+          )}
           <label className="field">
             <span className="field-label">{t.round.excuse}</span>
             <AutoTextarea value={excuse} onChange={(e) => setExcuse(e.target.value)} />
