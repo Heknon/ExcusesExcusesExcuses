@@ -1,9 +1,12 @@
+# Managed by project-kit (kit sync). docs: https://github.com/Heknon/project-kit/blob/main/docs/contract.md
 name: Preview
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed, labeled]
     paths-ignore: ["**/*.md", "docs/**"]
+
 jobs:
   preview:
-    uses: Heknon/project-kit/.github/workflows/preview.yml@main
+    uses: Heknon/project-kit/.github/workflows/preview.yml@a11859732596d546e63c5fad38cd439b47c31ce5 # a118597
     secrets: inherit
