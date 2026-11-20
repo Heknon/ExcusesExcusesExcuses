@@ -58,11 +58,11 @@ const en = {
 
   auth: {
     rules: [
-      ['Commit.', 'Every week, say what you’ll get done.'],
-      ['Call it.', 'Pick who’ll come back with excuses.'],
-      ['Back someone.', 'Bet on who’ll actually deliver.'],
+      ['Commit.', 'Every week, everyone shares their goals.'],
+      ['Call it.', 'Who’ll come back with excuses?'],
+      ['Back someone.', 'Who’ll have the most impressive week?'],
     ] as [string, string][],
-    foot: 'Picks stay secret until the week starts. Points for doing it, and for reading your friends right.',
+    foot: 'Bets stay secret until they’re revealed together. At the end of the week the group votes for the most impressive result.',
     signupTitle: 'Create your account',
     loginTitle: 'Welcome back',
     signupSub: 'You’ll use this to join your group’s game.',
@@ -546,11 +546,11 @@ const he: Messages = {
 
   auth: {
     rules: [
-      ['מתחייבים.', 'כל שבוע אומרים מה עושים.'],
-      ['מנחשים.', 'בוחרים מי יחזור עם תירוצים.'],
-      ['מהמרים.', 'בוחרים מי באמת יבצע.'],
+      ['מתחייבים.', 'כל שבוע כולם משתפים את היעדים שלהם.'],
+      ['מנחשים.', 'מי יחזור עם תירוצים?'],
+      ['מהמרים.', 'למי יהיה השבוע הכי מרשים?'],
     ],
-    foot: 'הבחירות נשארות סודיות עד תחילת השבוע. נקודות על ביצוע — ועל היכרות טובה עם החברים.',
+    foot: 'ההימורים סודיים עד שנחשפים יחד. בסוף השבוע הקבוצה מצביעה על התוצאה הכי מרשימה.',
     signupTitle: 'יצירת חשבון',
     loginTitle: 'טוב שחזרת',
     signupSub: 'החשבון ישמש להצטרפות למשחק של הקבוצה.',
